@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Blue Barn Scale</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#2c5d8f">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Blue Barn Grain · Scale</h1>
+    <div class="meta">
+      <span class="pill test" id="pTest" hidden>TEST MODE</span>
+      <span class="pill" id="pNet">Starting…</span>
+      <span class="pill" id="pScale">Scale ·</span>
+      <span class="pill" id="pMoist">Moisture ·</span>
+      <button class="ghost" id="btnPort" type="button">Connect serial port</button>
+      <button class="ghost" id="btnSettings" type="button">Settings</button>
+    </div>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <div class="grid">
+    <section class="card" aria-label="Scale">
+      <div class="lcd">
+        <div class="row"><span class="lcdlabel" id="wsrc">Live weight</span><span class="flag" id="flag">NO DATA</span></div>
+        <div class="row"><span class="weight" id="w">—</span><span class="unit">lb</span></div>
+        <div class="row"><span class="src" id="raw">waiting for scale</span><span class="src">720i</span></div>
+      </div>
+
+      <div class="sim" id="sim" hidden>
+        <span class="label">Simulator</span>
+        <div class="simrow">
+          <button type="button" id="sEmpty">Empty truck on</button>
+          <button type="button" id="sLoad">Loaded truck on</button>
+          <button type="button" id="sOff">Truck off</button>
+        </div>
+        <div class="simrow">
+          <label for="sLoadNo">Moisture sample for load #</label>
+          <input id="sLoadNo" inputmode="numeric" value="1" style="width:70px">
+          <button type="button" id="sMoist">Send reading</button>
+        </div>
+      </div>
+
+      <div class="btns">
+        <button class="big" id="wIn" type="button">Weigh In<small id="wInWhy"></small></button>
+        <button class="big alt" id="wOut" type="button">Weigh Out<small id="wOutWhy"></small></button>
+      </div>
+
+      <div class="yard">
+        <div class="yhead"><span class="label">On the yard · <span id="ycount">0</span></span><button class="ghost" id="newT" type="button">+ New truck</button></div>
+        <div id="ylist" class="yard"></div>
+      </div>
+
+      <div id="unmatchedBox" hidden>
+        <div class="label warnlabel">Moisture readings that need a truck</div>
+        <div id="unmatched" class="yard"></div>
+      </div>
+
+      <div class="queue">
+        <div class="label">Finished today · tap to reprint</div>
+        <div class="tblwrap"><table>
+          <thead><tr><th>Ticket</th><th>Dir</th><th>Truck</th><th>Out</th><th class="n">Net bu</th><th>Sync</th></tr></thead>
+          <tbody id="done"></tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <section class="card" aria-label="Ticket">
+      <div class="dhead">
+        <h2 id="dTitle">New truck</h2>
+        <span class="state new" id="dState">Not weighed</span>
+      </div>
+      <div class="weights">
+        <div class="wbox"><small id="vFirstLbl">First weight</small><b id="vFirst">—</b></div>
+        <div class="wbox"><small id="vSecondLbl">Second weight</small><b id="vSecond">—</b></div>
+        <div class="wbox net"><small>Net · <span id="vBu">0.00</span> bu</small><b id="vNet">—</b></div>
+      </div>
+
+      <div class="form">
+        <div class="f full"><label>Direction</label>
+          <div class="seg"><button type="button" aria-pressed="true" id="dOut">OUT · Sale</button><button type="button" aria-pressed="false" id="dIn">IN · From field</button></div>
+        </div>
+
+        <div class="f" data-dir="OUT"><label for="buyer">Buyer</label><select id="buyer"></select></div>
+        <div class="f" data-dir="OUT"><label for="contract">Contract</label><select id="contract"></select><span class="hint" id="cinfo"></span></div>
+
+        <div class="f" data-dir="IN"><label for="field">Field</label><select id="field"></select><span class="hint" id="shareInfo"></span></div>
+        <div class="f" data-dir="IN"><label>Load #</label><div class="loadno" id="loadNo">Assigned at weigh in</div></div>
+
+        <div class="f"><label for="comm">Commodity</label><select id="comm"></select></div>
+        <div class="f"><label for="cy">Crop year</label><select id="cy"></select></div>
+        <div class="f"><label for="truck">Truck</label><input id="truck" list="truckList" autocomplete="off"><datalist id="truckList"></datalist></div>
+        <div class="f"><label for="driver">Driver</label><input id="driver" autocomplete="off"></div>
+      </div>
+
+      <div id="gradeBox" data-dir="IN">
+        <div class="label">Grade · from the moisture tester by load #</div>
+        <div class="grade">
+          <div class="f"><label for="m">Moisture %</label><input id="m" inputmode="decimal"></div>
+          <div class="f"><label for="tw">Test wt</label><input id="tw" inputmode="decimal"></div>
+          <div class="f"><label for="tp">Temp °F</label><input id="tp" inputmode="decimal"></div>
+          <div class="f"><label for="fm">FM %</label><input id="fm" inputmode="decimal"></div>
+        </div>
+        <div id="readings" class="hint"></div>
+      </div>
+
+      <div class="form">
+        <div class="f" data-dir="OUT"><label for="bol">Bill of lading #</label><input id="bol" readonly></div>
+        <div class="f"><label for="op">Weighmaster</label><input id="op" autocomplete="off"></div>
+        <div class="f full"><label for="rm">Remarks</label><input id="rm" autocomplete="off"></div>
+      </div>
+
+      <div class="foot">
+        <span class="sum" id="sum"></span>
+        <div class="footbtns">
+          <button class="ghost bad" id="void" type="button" hidden>Void ticket</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <details id="diag">
+    <summary>Diagnostics</summary>
+    <div id="diagBody" class="diagbody"></div>
+  </details>
+</div>
+
+<dialog id="settings">
+  <form id="setForm" method="dialog">
+    <h2>Settings</h2>
+    <p class="hint" id="setIntro"></p>
+    <div class="form">
+      <div class="f full"><label for="sUrl">Backend web app URL</label><input id="sUrl" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off"></div>
+      <div class="f full"><label for="sKey">Backend key</label><input id="sKey" autocomplete="off"></div>
+      <div class="f"><label for="sStation">Station name</label><input id="sStation" value="Scale house"></div>
+      <div class="f"><label for="sOp">Default weighmaster</label><input id="sOp"></div>
+      <div class="f"><label for="sTicket">Next ticket #</label><input id="sTicket" inputmode="numeric"></div>
+      <div class="f"><label for="sBol">Next bill of lading #</label><input id="sBol" inputmode="numeric"></div>
+      <div class="f"><label for="sBaud">Serial baud rate</label><select id="sBaud"><option>1200</option><option>2400</option><option>4800</option><option selected>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option></select></div>
+      <div class="f"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="sTest" checked> Test mode (prints TEST on tickets)</label></div>
+      <div class="f full"><label class="chk"><input type="checkbox" id="sSim"> Simulator (fake scale and moisture tester)</label></div>
+    </div>
+    <p class="hint" id="setMsg"></p>
+    <div class="foot">
+      <button class="ghost" type="button" id="sCheck">Test connection</button>
+      <div class="footbtns">
+        <button class="ghost" type="button" id="sCancel">Cancel</button>
+        <button class="big small" type="button" id="sSave">Save</button>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" hidden></div>
+<script src="parsers.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

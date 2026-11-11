@@ -1,0 +1,22 @@
+const { chromium } = require('playwright');
+const BASE = 'http://localhost:8123/';
+(async () => {
+  const b = await chromium.launch(); const page = await (await b.newContext()).newPage();
+  const errs = []; page.on('pageerror', e => errs.push(e.message));
+  const stable = async () => { await page.waitForFunction(() => document.getElementById('flag').textContent === 'STABLE', null, { timeout: 15000 }); await page.waitForTimeout(300); };
+  await page.goto(BASE); await page.waitForSelector('#settings[open]');
+  await page.fill('#sUrl', BASE + 'api'); await page.fill('#sKey', 'k'); await page.check('#sSim');
+  await page.click('#sCheck'); await page.waitForFunction(() => /Connected/.test(document.getElementById('setMsg').textContent)); await page.click('#sSave');
+  await page.click('#sEmpty'); await stable();
+  await page.selectOption('#buyer', 'The Andersons'); await page.selectOption('#contract', 'TEST-C1'); await page.fill('#truck', 'T1');
+  await page.click('#wIn');
+  await page.click('#sOff'); await page.waitForTimeout(400); await page.click('#sEmpty'); await stable();
+  await page.click('.yrow >> text=T1'); await page.waitForTimeout(300);
+  console.log('empty truck on scale, OUT truck selected ->', await page.textContent('#wOutWhy'), '| disabled', await page.isDisabled('#wOut'));
+  await page.click('#sLoad'); await stable(); await page.click('#wOut');
+  await page.waitForFunction(() => /synced/i.test(document.getElementById('pNet').textContent), null, { timeout: 30000 });
+  await page.click('#newT'); await page.selectOption('#buyer', 'The Andersons'); await page.selectOption('#contract', 'TEST-C1'); await page.waitForTimeout(300);
+  console.log('contract line after one load ->', await page.textContent('#cinfo'));
+  console.log('errors', errs);
+  await b.close();
+})();
