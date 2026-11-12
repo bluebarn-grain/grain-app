@@ -4,7 +4,7 @@
 (() => {
 'use strict';
 const P = window.BBG;
-const VERSION = '0.1.0';
+const VERSION = '0.1.1';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt0 = n => (n == null || isNaN(n)) ? '—' : Math.round(n).toLocaleString('en-US');
@@ -52,7 +52,17 @@ const S = {
 };
 const DEFAULT_CONFIG = { backendUrl: '', key: '', station: 'Scale house', operator: '', baud: 9600, test: true, sim: false };
 const EMPTY_LISTS = { customers: [], fields: [], shares: [], commodities: [{ Commodity: 'Corn', LbPerBu: 56 }, { Commodity: 'Sorghum', LbPerBu: 56 }, { Commodity: 'Wheat', LbPerBu: 60 }, { Commodity: 'Soybeans', LbPerBu: 60 }], trucks: [], contracts: [], settings: {} };
-const L = () => S.lists || EMPTY_LISTS;
+// Sample lists used only in simulator mode before a backend is connected, so the app can be tried anywhere.
+const DEMO_LISTS = {
+  ...EMPTY_LISTS,
+  customers: [{ Customer: 'Roenbaugh Farms', Type: 'Operator' }, { Customer: 'The Andersons', Type: 'Buyer' }, { Customer: 'TEST Buyer B', Type: 'Buyer' }, { Customer: 'TEST Landlord A', Type: 'Landlord' }],
+  fields: [{ Field: 'TEST Home Place' }, { Field: 'TEST Share Quarter' }],
+  shares: [{ Field: 'TEST Home Place', CropYear: 2026, Owner: 'Roenbaugh Farms', SharePct: 100 }, { Field: 'TEST Share Quarter', CropYear: 2026, Owner: 'Roenbaugh Farms', SharePct: 50 }, { Field: 'TEST Share Quarter', CropYear: 2026, Owner: 'TEST Landlord A', SharePct: 50 }],
+  trucks: [{ Truck: '196 Triple 8' }, { Truck: '22 Friesen Trucking' }, { Truck: '31 Friesen Trucking' }],
+  contracts: [{ ContractNo: 'TEST-C1', Buyer: 'The Andersons', Commodity: 'Corn', CropYear: 2026, Bushels: 10000, DeliveredBu: 0 }, { ContractNo: 'TEST-C2', Buyer: 'TEST Buyer B', Commodity: 'Sorghum', CropYear: 2026, Bushels: 5000, DeliveredBu: 0 }],
+  settings: { FMDefault: 0 }
+};
+const L = () => S.lists || (S.config && S.config.sim && !S.config.backendUrl ? DEMO_LISTS : EMPTY_LISTS);
 
 function toast(msg, ms = 3400) { const e = $('toast'); e.textContent = msg; e.hidden = false; clearTimeout(e._t); e._t = setTimeout(() => e.hidden = true, ms); }
 function log(kind, line) { const a = S.diag[kind]; a.unshift(new Date().toLocaleTimeString() + '  ' + line); if (a.length > 40) a.length = 40; if ($('diag').open) renderDiag(); }
@@ -551,7 +561,7 @@ async function saveSettings() {
   S.counters = { ...(S.counters || { lastLoad: 0 }), nextTicket: nt, nextBol: nb };
   await DB.put('kv', S.counters, 'counters');
   if (S.config.sim && !wasSim) simStart(); if (!S.config.sim && wasSim) simStop();
-  $('settings').close(); toast('Settings saved'); render(); loadDetail(); sync(true);
+  $('settings').close(); toast('Settings saved'); fillLists(); render(); loadDetail(); sync(true);
 }
 
 // ---------------- start ----------------
