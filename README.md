@@ -50,8 +50,10 @@ Every night at 7 pm, each buyer that shipped grain gets one email from BBL&C: a 
 
 ## Office side
 Tap **Office** at the top (same app, same link). It works on the iPad or a phone, and shows the last copy when the internet is down.
+- **Customers:** buyers, landlords and the farm (Operator). Name, pays-as, contact, phone, email, address. Inactive ones don't show at the scale.
+- **Fields:** acres, Operations Center name, FSA farm/tract, insurance unit, and each crop year's owner split (must total 100%; "Same as last year" copies it). Fields with no split for the year are flagged. Loads already weighed keep the split they were saved with.
 - **Contracts:** add, change or close contracts. Closed and filled contracts drop off the scale. The contract # can't change once saved.
-- **Fields:** loads, wet and dry bushels, average moisture and test weight per field; tap a field for each owner's share and its tickets. Add an **Acres** column to the Fields tab for bushels per acre.
+- **Field report:** loads, wet and dry bushels, average moisture and test weight per field; tap a field for each owner's share and its tickets. Bushels per acre show once a field has acres.
 - **Inventory:** on hand (opening + dry bushels in − out ± adjustments), what's left to ship on open contracts, and unsold, per crop and crop year.
 - **Write-offs:** shrink written off at each bins-empty close-out, as bushels and % of what came in.
 - **Adjustments:** opening balance, bins measured, bins empty (zero out), other. **Undo** marks the line Void in the Sheet; nothing is deleted.

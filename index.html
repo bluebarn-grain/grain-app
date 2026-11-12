@@ -139,7 +139,9 @@
     <div class="obar">
       <div class="tabs" role="tablist">
         <button type="button" data-tab="contracts" aria-pressed="true">Contracts</button>
-        <button type="button" data-tab="fields" aria-pressed="false">Fields</button>
+        <button type="button" data-tab="customers" aria-pressed="false">Customers</button>
+        <button type="button" data-tab="fieldsetup" aria-pressed="false">Fields</button>
+        <button type="button" data-tab="fields" aria-pressed="false">Field report</button>
         <button type="button" data-tab="inventory" aria-pressed="false">Inventory</button>
         <button type="button" data-tab="writeoffs" aria-pressed="false">Write-offs</button>
         <button type="button" data-tab="adjustments" aria-pressed="false">Adjustments</button>
@@ -175,6 +177,49 @@
       <span class="hint" id="cShipped"></span>
       <div class="footbtns"><button class="ghost" type="button" id="cCancel">Cancel</button><button class="big small" type="button" id="cSave">Save</button></div>
     </div>
+  </form>
+</dialog>
+
+<dialog id="custDlg">
+  <form method="dialog">
+    <h2 id="kTitle">New customer</h2>
+    <div class="form">
+      <div class="f"><label for="kName">Name</label><input id="kName" autocomplete="off"></div>
+      <div class="f"><label for="kType">Type</label><select id="kType"><option>Buyer</option><option>Landlord</option><option>Operator</option></select></div>
+      <div class="f"><label for="kPays">Pays as / checks made to</label><input id="kPays" autocomplete="off"></div>
+      <div class="f"><label for="kContact">Contact person</label><input id="kContact" autocomplete="off"></div>
+      <div class="f"><label for="kPhone">Phone</label><input id="kPhone" type="tel" autocomplete="off"></div>
+      <div class="f"><label for="kEmail">Email (commas for more than one)</label><input id="kEmail" type="email" autocomplete="off"></div>
+      <div class="f full"><label for="kAddr">Address</label><input id="kAddr" autocomplete="off"></div>
+      <div class="f full"><label for="kNotes">Notes</label><input id="kNotes" autocomplete="off"></div>
+      <div class="f full"><label class="chk"><input type="checkbox" id="kActive" checked> Active (shows at the scale and in lists)</label></div>
+    </div>
+    <p class="hint" id="kMsg"></p>
+    <div class="foot"><span></span><div class="footbtns"><button class="ghost" type="button" id="kCancel">Cancel</button><button class="big small" type="button" id="kSave">Save</button></div></div>
+  </form>
+</dialog>
+
+<dialog id="fieldDlg">
+  <form method="dialog">
+    <h2 id="fTitle">New field</h2>
+    <div class="form">
+      <div class="f"><label for="fName">Field name</label><input id="fName" autocomplete="off"></div>
+      <div class="f"><label for="fAcres">Acres</label><input id="fAcres" inputmode="decimal"></div>
+      <div class="f"><label for="fOps">Operations Center name</label><input id="fOps" autocomplete="off"></div>
+      <div class="f"><label for="fUnit">Insurance unit</label><input id="fUnit" autocomplete="off"></div>
+      <div class="f"><label for="fFarm">FSA farm #</label><input id="fFarm" autocomplete="off" inputmode="numeric"></div>
+      <div class="f"><label for="fTract">FSA tract #</label><input id="fTract" autocomplete="off" inputmode="numeric"></div>
+      <div class="f full"><label for="fNotes">Notes</label><input id="fNotes" autocomplete="off"></div>
+      <div class="f full"><label class="chk"><input type="checkbox" id="fActive" checked> Active (shows at the scale)</label></div>
+    </div>
+    <div class="splitbox">
+      <div class="ohead"><span class="label">Split for crop year <select id="fYear" class="inline"></select></span><button class="ghost" type="button" id="fCopy">Same as last year</button></div>
+      <div id="fShares"></div>
+      <div class="ohead"><button class="ghost" type="button" id="fAddOwner">Add owner</button><span class="bookline" id="fTotal"></span></div>
+      <p class="hint" id="fSplitNote"></p>
+    </div>
+    <p class="hint" id="fMsg"></p>
+    <div class="foot"><span></span><div class="footbtns"><button class="ghost" type="button" id="fCancel">Cancel</button><button class="big small" type="button" id="fSave">Save</button></div></div>
   </form>
 </dialog>
 

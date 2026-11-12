@@ -6,7 +6,7 @@
 const R = window.BBR;
 const $ = id => document.getElementById(id);
 let A;                                  // the scale app's helpers (window.BBG_APP)
-const O = { data: null, tab: 'contracts', year: '', open: {}, busy: false, adjType: '', contract: null };
+const O = { data: null, tab: 'contracts', year: '', open: {}, busy: false, adjType: '', contract: null, customer: null, field: null, shareRows: [] };
 
 const n0 = v => A.fmt0(v), n2 = v => A.fmt2(v), e = v => A.esc(v);
 const day = v => { if (!v) return ''; const d = new Date(v); return isNaN(d) ? '' : `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`; };
@@ -14,6 +14,7 @@ const isoDay = v => { if (!v) return ''; const d = new Date(v); return isNaN(d) 
 const today = () => isoDay(new Date());
 const testMode = () => !!(A.S.config && A.S.config.test);
 const opt = () => ({ includeTest: testMode(), cropYear: O.year });
+const ac = v => Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 });
 const signed = v => (v > 0 ? '+' : '') + n2(v);
 
 // ---------------- data ----------------
@@ -38,7 +39,7 @@ function status(msg) {
   const d = O.data;
   $('oStatus').textContent = msg || (d ? `Updated ${new Date(d.at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` + (testMode() ? ' · TEST MODE: test tickets included' : '') : '');
 }
-const D = () => O.data || { tickets: [], splits: [], allocations: [], adjustments: [], contracts: [], customers: [], fields: [], commodities: [], settings: {} };
+const D = () => O.data || { tickets: [], splits: [], allocations: [], adjustments: [], contracts: [], customers: [], fields: [], shares: [], commodities: [], settings: {} };
 function years() {
   const ys = new Set();
   D().tickets.forEach(t => t.CropYear && ys.add(String(t.CropYear)));
@@ -62,9 +63,9 @@ function render() {
   const ys = years();
   $('oYear').innerHTML = [['', 'All crop years'], ...ys.map(y => [y, y])].map(([v, l]) => `<option value="${v}"${String(v) === String(O.year) ? ' selected' : ''}>${l}</option>`).join('');
   document.querySelectorAll('#officeView .tabs button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === O.tab)));
-  $('oYear').hidden = O.tab === 'adjustments';
+  $('oYear').hidden = O.tab === 'adjustments' || O.tab === 'customers';
   status();
-  $('oBody').innerHTML = ({ contracts, fields, inventory, writeoffs, adjustments })[O.tab]();
+  $('oBody').innerHTML = ({ contracts, customers, fieldsetup, fields, inventory, writeoffs, adjustments })[O.tab]();
   wire();
 }
 
@@ -122,6 +123,124 @@ async function saveContract() {
   finally { $('cSave').disabled = false; }
 }
 const msg = (id, t) => { $(id).textContent = t; };
+
+// ---------- customers ----------
+function customers() {
+  const cs = D().customers.slice().sort((a, b) => (a.Active === false) - (b.Active === false) || String(a.Type).localeCompare(String(b.Type)) || String(a.Customer).localeCompare(String(b.Customer)));
+  return `<div class="ohead"><h2>Customers</h2><button class="big small" type="button" id="kNew">New customer</button></div>
+    ${cs.length ? `<div class="tblwrap"><table><thead><tr><th>Name</th><th>Type</th><th>Pays as</th><th>Contact</th><th>Phone</th><th>Email</th></tr></thead><tbody>
+    ${cs.map(c => `<tr data-customer="${e(c.Customer)}" class="${c.Active === false || String(c.Active).toUpperCase() === 'FALSE' ? 'closed' : ''}"><td><b>${e(c.Customer)}</b></td><td>${e(c.Type)}</td><td>${e(c.PaysAsName)}</td><td>${e(c.Contact)}</td><td>${e(c.Phone)}</td><td>${e(c.Email)}</td></tr>`).join('')}
+    </tbody></table></div><p class="hint">Buyers, landlords and the farm itself (Operator). Tap one to change it. The buyer's email is where the nightly shipment emails go. Inactive customers are grayed out and don't show at the scale.</p>` : '<div class="empty">No customers yet.</div>'}`;
+}
+function openCustomer(name) {
+  const c = name ? D().customers.find(x => x.Customer === name) : null;
+  O.customer = c ? c.Customer : null;
+  $('kTitle').textContent = c ? c.Customer : 'New customer';
+  $('kName').value = c ? c.Customer : ''; $('kName').readOnly = !!c;
+  $('kType').value = c ? c.Type : 'Landlord';
+  $('kPays').value = c ? c.PaysAsName || '' : ''; $('kContact').value = c ? c.Contact || '' : ''; $('kPhone').value = c ? c.Phone || '' : '';
+  $('kEmail').value = c ? c.Email || '' : ''; $('kAddr').value = c ? c.Address || '' : ''; $('kNotes').value = c ? c.Notes || '' : '';
+  $('kActive').checked = !c || !(c.Active === false || String(c.Active).toUpperCase() === 'FALSE');
+  $('kMsg').textContent = '';
+  $('custDlg').showModal(); if (!c) $('kName').focus();
+}
+async function saveCustomer() {
+  const c = { Customer: $('kName').value.trim(), Type: $('kType').value, PaysAsName: $('kPays').value, Contact: $('kContact').value, Phone: $('kPhone').value,
+    Email: $('kEmail').value, Address: $('kAddr').value, Notes: $('kNotes').value, Active: $('kActive').checked };
+  if (!c.Customer) return msg('kMsg', 'Enter the name.');
+  $('kSave').disabled = true; msg('kMsg', 'Saving…');
+  try {
+    await A.api({ action: 'saveCustomer', isNew: !O.customer, customer: c });
+    $('custDlg').close(); A.toast(`${c.Customer} saved`);
+    await load(true); A.refreshLists().catch(() => {});
+  } catch (err) { msg('kMsg', err.message); }
+  finally { $('kSave').disabled = false; }
+}
+
+// ---------- fields and splits ----------
+const splitYear = () => O.year || String(new Date().getFullYear());
+const sharesOf = (field, y) => D().shares.filter(s => s.Field === field && String(s.CropYear) === String(y));
+function fieldsetup() {
+  const y = splitYear();
+  const fs = D().fields.slice().sort((a, b) => (a.Active === false) - (b.Active === false) || String(a.Field).localeCompare(String(b.Field)));
+  const missing = fs.filter(f => f.Active !== false && !sharesOf(f.Field, y).length).length;
+  const totAc = fs.filter(f => f.Active !== false).reduce((a, f) => a + (Number(f.Acres) || 0), 0);
+  return `<div class="ohead"><h2>Fields and ${e(y)} splits</h2><button class="big small" type="button" id="fNew">New field</button></div>
+    ${missing ? `<div class="banner">${missing} active field${missing === 1 ? ' has' : 's have'} no ${e(y)} split. Loads from ${missing === 1 ? 'it' : 'them'} print "SPLIT NOT SET" until it's added.</div>` : ''}
+    ${fs.length ? `<div class="tblwrap"><table><thead><tr><th>Field</th><th class="n">Acres</th><th>${e(y)} split</th><th>Insurance unit</th><th>FSA farm / tract</th></tr></thead><tbody>
+    ${fs.map(f => { const sh = sharesOf(f.Field, y); return `<tr data-field="${e(f.Field)}" class="${f.Active === false || String(f.Active).toUpperCase() === 'FALSE' ? 'closed' : ''}"><td><b>${e(f.Field)}</b></td><td class="n">${f.Acres ? ac(f.Acres) : '—'}</td>
+      <td>${sh.length ? sh.map(s => `${e(s.Owner)} ${Number(s.SharePct)}%`).join(', ') : '<span class="tag">No split</span>'}</td><td>${e(f.InsuranceUnit)}</td><td>${e(f.FSAFarm)}${f.FSATract ? ' / ' + e(f.FSATract) : ''}</td></tr>`; }).join('')}
+    <tr class="total"><td>Total active</td><td class="n">${ac(totAc)}</td><td colspan="3"></td></tr>
+    </tbody></table></div><p class="hint">Pick a crop year at the top to see or set that year's splits. Tap a field to change its acres, details or split.</p>` : '<div class="empty">No fields yet.</div>'}`;
+}
+function ownerOptions(cur) {
+  const os = D().customers.filter(c => (c.Type === 'Landlord' || c.Type === 'Operator') && (c.Active !== false || c.Customer === cur)).map(c => c.Customer).sort((a, b) => a.localeCompare(b));
+  if (cur && !os.includes(cur)) os.push(cur);
+  return ['', ...os].map(o => `<option value="${e(o)}"${o === cur ? ' selected' : ''}>${o ? e(o) : 'Pick an owner…'}</option>`).join('');
+}
+function drawShares() {
+  $('fShares').innerHTML = O.shareRows.map((r, i) => `<div class="share"><select data-si="${i}" data-k="Owner">${ownerOptions(r.Owner)}</select>
+    <span class="pct"><input data-si="${i}" data-k="SharePct" inputmode="decimal" value="${e(r.SharePct)}">%</span><button class="ghost bad" type="button" data-rm="${i}">Remove</button></div>`).join('') ||
+    '<div class="hint">No owners yet for this year. Add one, or use Same as last year.</div>';
+  $('fShares').querySelectorAll('[data-si]').forEach(x => x.oninput = x.onchange = () => { O.shareRows[x.dataset.si][x.dataset.k] = x.value; $('fMsg').textContent = ''; shareTotal(); });
+  $('fShares').querySelectorAll('[data-rm]').forEach(x => x.onclick = () => { O.shareRows.splice(Number(x.dataset.rm), 1); drawShares(); });
+  shareTotal();
+}
+function shareTotal() {
+  const t = O.shareRows.reduce((a, r) => a + (Number(r.SharePct) || 0), 0);
+  const good = !O.shareRows.length || Math.abs(t - 100) < 0.001;
+  $('fTotal').innerHTML = O.shareRows.length ? `Total <b class="${good ? 'ok' : 'neg'}">${Math.round(t * 1000) / 1000}%</b>${good ? '' : ' — must be 100%'}` : '';
+}
+function loadShares() {
+  const y = $('fYear').value, name = O.field;
+  O.shareRows = name ? sharesOf(name, y).map(s => ({ Owner: s.Owner, SharePct: Number(s.SharePct) })) : [];
+  if (!O.shareRows.length && !name) { const op = D().customers.find(c => c.Type === 'Operator'); if (op) O.shareRows = [{ Owner: op.Customer, SharePct: 100 }]; }
+  const loads = name ? D().tickets.filter(t => t.Direction === 'IN' && t.Field === name && String(t.CropYear) === String(y)).length : 0;
+  $('fSplitNote').textContent = loads ? `${loads} load${loads === 1 ? ' was' : 's were'} already weighed from this field for ${y}. They keep the split they were saved with; a change here applies to new loads.` : '';
+  drawShares();
+}
+function openField(name) {
+  const f = name ? D().fields.find(x => x.Field === name) : null;
+  O.field = f ? f.Field : null;
+  $('fTitle').textContent = f ? f.Field : 'New field';
+  $('fName').value = f ? f.Field : ''; $('fName').readOnly = !!f;
+  $('fAcres').value = f && f.Acres !== '' && f.Acres != null ? f.Acres : '';
+  $('fOps').value = f ? f.OpsCenterName || '' : ''; $('fUnit').value = f ? f.InsuranceUnit || '' : '';
+  $('fFarm').value = f ? f.FSAFarm || '' : ''; $('fTract').value = f ? f.FSATract || '' : ''; $('fNotes').value = f ? f.Notes || '' : '';
+  $('fActive').checked = !f || !(f.Active === false || String(f.Active).toUpperCase() === 'FALSE');
+  const y = Number(splitYear());
+  $('fYear').innerHTML = [y + 1, y, y - 1, y - 2].map(v => `<option${String(v) === String(y) ? ' selected' : ''}>${v}</option>`).join('');
+  $('fMsg').textContent = '';
+  loadShares();
+  $('fieldDlg').showModal(); if (!f) $('fName').focus();
+}
+function copyLastYear() {
+  const y = Number($('fYear').value), name = O.field || $('fName').value.trim();
+  const prev = D().shares.filter(s => s.Field === name && Number(s.CropYear) < y).reduce((m, s) => Math.max(m, Number(s.CropYear)), 0);
+  if (!prev) return msg('fMsg', `No earlier split for ${name || 'this field'} to copy.`);
+  O.shareRows = sharesOf(name, prev).map(s => ({ Owner: s.Owner, SharePct: Number(s.SharePct) }));
+  msg('fMsg', `Copied the ${prev} split. Save to keep it for ${y}.`); drawShares();
+}
+async function saveField() {
+  const name = $('fName').value.trim(), acresTxt = String($('fAcres').value).replace(/,/g, '').trim();
+  if (!name) return msg('fMsg', 'Enter the field name.');
+  if (acresTxt && !(Number(acresTxt) > 0)) return msg('fMsg', 'Acres must be a number more than 0, or blank.');
+  const rows = O.shareRows.filter(r => r.Owner || r.SharePct);
+  if (rows.some(r => !r.Owner)) return msg('fMsg', 'Pick an owner on every split line, or remove the empty line.');
+  const total = rows.reduce((a, r) => a + (Number(r.SharePct) || 0), 0);
+  if (rows.length && Math.abs(total - 100) > 0.001) return msg('fMsg', `The split adds to ${Math.round(total * 1000) / 1000}%. It has to be 100%.`);
+  const before = O.field ? sharesOf(O.field, $('fYear').value).map(s => s.Owner + Number(s.SharePct)).sort().join() : '';
+  const after = rows.map(r => r.Owner + Number(r.SharePct)).sort().join();
+  $('fSave').disabled = true; msg('fMsg', 'Saving…');
+  try {
+    await A.api({ action: 'saveField', isNew: !O.field, field: { Field: name, Acres: acresTxt === '' ? '' : Number(acresTxt), OpsCenterName: $('fOps').value, InsuranceUnit: $('fUnit').value,
+      FSAFarm: $('fFarm').value, FSATract: $('fTract').value, Notes: $('fNotes').value, Active: $('fActive').checked } });
+    if (before !== after) await A.api({ action: 'saveShares', fieldName: name, cropYear: Number($('fYear').value), shares: rows.map(r => ({ Owner: r.Owner, SharePct: Number(r.SharePct) })) });
+    $('fieldDlg').close(); A.toast(`${name} saved`);
+    await load(true); A.refreshLists().catch(() => {});
+  } catch (err) { msg('fMsg', err.message); }
+  finally { $('fSave').disabled = false; }
+}
 
 // ---------- fields ----------
 function fields() {
@@ -262,7 +381,7 @@ async function voidAdj(btn) {
 function printReport() {
   let a = $('printArea');
   if (!a) { a = document.createElement('div'); a.id = 'printArea'; document.body.appendChild(a); }
-  const names = { contracts: 'Contracts', fields: 'Field report', inventory: 'Inventory and sales position', writeoffs: 'Write-offs', adjustments: 'Inventory adjustments' };
+  const names = { contracts: 'Contracts', customers: 'Customers', fieldsetup: 'Fields and splits', fields: 'Field report', inventory: 'Inventory and sales position', writeoffs: 'Write-offs', adjustments: 'Inventory adjustments' };
   const body = $('oBody').cloneNode(true);
   body.querySelectorAll('button').forEach(b => b.remove());
   body.querySelectorAll('.ohead h2').forEach(h => h.remove());
@@ -276,6 +395,10 @@ function wire() {
   const b = $('oBody');
   b.querySelectorAll('[data-contract]').forEach(tr => tr.onclick = () => openContract(tr.dataset.contract));
   if ($('cNew')) $('cNew').onclick = () => openContract(null);
+  b.querySelectorAll('[data-customer]').forEach(tr => tr.onclick = () => openCustomer(tr.dataset.customer));
+  if ($('kNew')) $('kNew').onclick = () => openCustomer(null);
+  b.querySelectorAll('[data-field]').forEach(tr => tr.onclick = () => openField(tr.dataset.field));
+  if ($('fNew')) $('fNew').onclick = () => openField(null);
   b.querySelectorAll('[data-open]').forEach(tr => tr.onclick = () => { O.open[tr.dataset.open] = !O.open[tr.dataset.open]; render(); });
   b.querySelectorAll('[data-adj]').forEach(x => x.onclick = () => openAdj(x.dataset.adj, x.dataset.c, x.dataset.y));
   b.querySelectorAll('[data-void]').forEach(x => x.onclick = () => voidAdj(x));
@@ -290,6 +413,10 @@ function init() {
   $('oPrint').onclick = printReport;
   $('cSave').onclick = saveContract; $('cCancel').onclick = () => $('contractDlg').close();
   $('aSave').onclick = saveAdj; $('aCancel').onclick = () => $('adjDlg').close();
+  $('kSave').onclick = saveCustomer; $('kCancel').onclick = () => $('custDlg').close();
+  $('fSave').onclick = saveField; $('fCancel').onclick = () => $('fieldDlg').close();
+  $('fYear').onchange = loadShares; $('fCopy').onclick = copyLastYear;
+  $('fAddOwner').onclick = () => { O.shareRows.push({ Owner: '', SharePct: O.shareRows.length ? Math.max(0, 100 - O.shareRows.reduce((a, r) => a + (Number(r.SharePct) || 0), 0)) : 100 }); drawShares(); };
   for (const id of ['aComm', 'aYear', 'aBu']) { $(id).addEventListener('input', adjPreview); $(id).addEventListener('change', adjPreview); }
   let v = 'scale'; try { v = localStorage.getItem('bbg-view') || 'scale'; } catch (_) {}
   show(v);

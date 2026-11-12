@@ -59,6 +59,9 @@ function handle_(p) {
       case 'officeData': return out_(merge_({ ok: true }, officeData_(ss)));
       case 'saveContract': return out_(merge_({ ok: true }, saveContract_(ss, p.contract || {}, !!p.isNew)));
       case 'saveAdjustment': return out_(merge_({ ok: true }, saveAdjustment_(ss, p.adjustment || {})));
+      case 'saveCustomer': return out_(merge_({ ok: true }, saveCustomer_(ss, p.customer || {}, !!p.isNew)));
+      case 'saveField': return out_(merge_({ ok: true }, saveField_(ss, p.field || {}, !!p.isNew)));
+      case 'saveShares': return out_(merge_({ ok: true }, saveShares_(ss, p.fieldName, p.cropYear, p.shares || [])));
       case 'voidAdjustment': return out_(merge_({ ok: true }, voidAdjustment_(ss, p.adjNo, p.by)));
       default: return out_({ ok: false, error: 'Unknown action: ' + p.action });
     }
@@ -511,6 +514,7 @@ function officeData_(ss) {
     contracts: rows_(tab_(ss, 'Contracts')).filter(function (c) { return c.ContractNo; }),
     customers: rows_(tab_(ss, 'Customers')).filter(function (c) { return c.Customer; }),
     fields: rows_(tab_(ss, 'Fields')).filter(function (f) { return f.Field; }),
+    shares: rows_(tab_(ss, 'Shares')).filter(function (r) { return r.Field && r.Owner; }),
     commodities: rows_(tab_(ss, 'Commodities')).filter(function (c) { return c.Commodity; }),
     settings: settings,
     at: new Date().toISOString()
@@ -584,5 +588,79 @@ function voidAdjustment_(ss, adjNo, by) {
       return { adjNo: Number(adjNo) };
     }
     throw new Error('Adjustment ' + adjNo + ' was not found');
+  } finally { lock.releaseLock(); }
+}
+
+
+/* ---- customers, fields and splits ---- */
+var CUSTOMER_COLUMNS = ['Customer', 'Type', 'PaysAsName', 'Contact', 'Phone', 'Email', 'Address', 'Active', 'Notes'];
+var FIELD_COLUMNS = ['Field', 'Acres', 'OpsCenterName', 'FSAFarm', 'FSATract', 'InsuranceUnit', 'Active', 'Notes'];
+var CUSTOMER_TYPES = ['Buyer', 'Landlord', 'Operator'];
+
+/** Adds a row or updates the row whose key column matches. The key can't change once saved. */
+function upsert_(ss, tabName, cols, keyCol, rec, isNew, what) {
+  var key = String(rec[keyCol] || '').trim();
+  if (!key) throw new Error(what + ' name is required');
+  var t = sheetOrNew_(ss, tabName, cols), sh = t.sh, m = t.cols.map;
+  var v = sh.getDataRange().getValues(), at = -1;
+  for (var i = 1; i < v.length; i++) if (String(v[i][m[keyCol] - 1]).trim().toLowerCase() === key.toLowerCase()) { at = i + 1; break; }
+  if (isNew && at > 0) throw new Error(what + ' "' + key + '" already exists');
+  if (!isNew && at < 0) throw new Error(what + ' "' + key + '" was not found');
+  var row = at > 0 ? v[at - 1].slice() : new Array(t.cols.width).fill('');
+  while (row.length < t.cols.width) row.push('');
+  cols.forEach(function (c) { if (c in rec) row[m[c] - 1] = rec[c]; });
+  row[m[keyCol] - 1] = key;
+  if (at > 0) sh.getRange(at, 1, 1, t.cols.width).setValues([row]);
+  else sh.getRange(sh.getLastRow() + 1, 1, 1, t.cols.width).setValues([row]);
+  return key;
+}
+
+function saveCustomer_(ss, c, isNew) {
+  if (CUSTOMER_TYPES.indexOf(c.Type) < 0) throw new Error('Pick Buyer, Landlord or Operator');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var rec = { Customer: c.Customer, Type: c.Type };
+    if ('Active' in c || isNew) rec.Active = c.Active === false || String(c.Active).toUpperCase() === 'FALSE' ? false : true;
+    ['PaysAsName', 'Contact', 'Phone', 'Email', 'Address', 'Notes'].forEach(function (k) { if (k in c) rec[k] = String(c[k] == null ? '' : c[k]).trim(); });
+    return { customer: upsert_(ss, 'Customers', CUSTOMER_COLUMNS, 'Customer', rec, isNew, 'Customer') };
+  } finally { lock.releaseLock(); }
+}
+
+function saveField_(ss, f, isNew) {
+  var acres = f.Acres === '' || f.Acres == null ? '' : Number(f.Acres);
+  if (acres !== '' && !(acres > 0)) throw new Error('Acres must be more than 0, or left blank');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var rec = { Field: f.Field };
+    if ('Acres' in f) rec.Acres = acres;
+    if ('Active' in f || isNew) rec.Active = f.Active === false || String(f.Active).toUpperCase() === 'FALSE' ? false : true;
+    ['OpsCenterName', 'FSAFarm', 'FSATract', 'InsuranceUnit', 'Notes'].forEach(function (k) { if (k in f) rec[k] = String(f[k] == null ? '' : f[k]).trim(); });
+    return { field: upsert_(ss, 'Fields', FIELD_COLUMNS, 'Field', rec, isNew, 'Field') };
+  } finally { lock.releaseLock(); }
+}
+
+/** Replaces one field's split for one crop year. Shares must add to 100%. Loads already weighed keep the split they were saved with. */
+function saveShares_(ss, fieldName, cropYear, shares) {
+  fieldName = String(fieldName || '').trim(); cropYear = Number(cropYear);
+  if (!fieldName || !cropYear) throw new Error('Field and crop year are required');
+  var clean = shares.filter(function (s) { return s && s.Owner; }).map(function (s) { return { Owner: String(s.Owner).trim(), SharePct: Math.round(Number(s.SharePct) * 1000) / 1000 }; });
+  var seen = {};
+  clean.forEach(function (s) {
+    if (!(s.SharePct > 0 && s.SharePct <= 100)) throw new Error(s.Owner + ': share must be more than 0 and at most 100');
+    if (seen[s.Owner]) throw new Error(s.Owner + ' is listed twice'); seen[s.Owner] = true;
+  });
+  var total = clean.reduce(function (a, s) { return a + s.SharePct; }, 0);
+  if (clean.length && Math.abs(total - 100) > 0.001) throw new Error('Shares add to ' + total + '%, not 100%');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var sh = tab_(ss, 'Shares'), m = ensureColumns_(sh, ['Field', 'CropYear', 'Owner', 'SharePct']).map;
+    var v = sh.getDataRange().getValues(), head = v.shift(), width = head.length;
+    var keepRows = v.filter(function (r) { return !(String(r[m.Field - 1]).trim() === fieldName && Number(r[m.CropYear - 1]) === cropYear); });
+    clean.forEach(function (s) { var r = new Array(width).fill(''); r[m.Field - 1] = fieldName; r[m.CropYear - 1] = cropYear; r[m.Owner - 1] = s.Owner; r[m.SharePct - 1] = s.SharePct; keepRows.push(r); });
+    keepRows = keepRows.filter(function (r) { return r.some(function (x) { return x !== '' && x !== null; }); });
+    var blanks = v.length - keepRows.length;
+    if (keepRows.length) sh.getRange(2, 1, keepRows.length, width).setValues(keepRows);
+    if (blanks > 0) sh.getRange(2 + keepRows.length, 1, blanks, width).setValues(new Array(blanks).fill(0).map(function () { return new Array(width).fill(''); }));
+    return { field: fieldName, cropYear: cropYear, shares: clean };
   } finally { lock.releaseLock(); }
 }

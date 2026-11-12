@@ -147,6 +147,14 @@ tr.closed td{color:var(--muted)}
 .big2{font-size:17px;font-weight:600;min-height:1.4em}
 .rowbtns{display:flex;gap:6px;flex-wrap:wrap}
 
+dialog{max-height:calc(100vh - 32px);overflow:auto}
+.splitbox{border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;margin-top:12px}
+select.inline{width:auto;display:inline-block;font-size:15px;padding:3px 6px;margin-left:6px}
+.share{display:grid;grid-template-columns:minmax(0,1fr) 110px auto;gap:8px;align-items:center}
+.share .pct{display:flex;align-items:center;gap:4px}
+.ok{color:var(--ok)}
+.tag{font-size:12px;padding:1px 7px;border-radius:4px;background:var(--warnbg);color:var(--warn);font-weight:600}
+
 /* Ticket printing: only the ticket goes to the printer. */
 #printArea{display:none}
 @media print{

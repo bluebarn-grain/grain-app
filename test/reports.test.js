@@ -99,4 +99,31 @@ ok('adjustments: save, require a name, void', () => {
   d = call({ action: 'officeData' });
   assert.equal(d.adjustments.length, 1);
 });
+ok('customers: add, refuse duplicate (any case), edit, type required', () => {
+  assert.ok(call({ action: 'saveCustomer', isNew: true, customer: { Customer: 'Smith Land LLC', Type: 'Landlord', Phone: '620-555-0101' } }).ok);
+  assert.match(call({ action: 'saveCustomer', isNew: true, customer: { Customer: 'smith land llc', Type: 'Landlord' } }).error, /already exists/);
+  assert.match(call({ action: 'saveCustomer', isNew: true, customer: { Customer: 'X', Type: '' } }).error, /Buyer, Landlord or Operator/);
+  assert.ok(call({ action: 'saveCustomer', isNew: false, customer: { Customer: 'Smith Land LLC', Type: 'Landlord', Phone: '620-555-0199', Active: false } }).ok);
+  const c = call({ action: 'officeData' }).customers.find(x => x.Customer === 'Smith Land LLC');
+  assert.equal(c.Phone, '620-555-0199'); assert.equal(c.Active, false);
+  assert.equal(call({ action: 'lists' }).customers.some(x => x.Customer === 'Smith Land LLC'), false);  // inactive: not at the scale
+});
+ok('fields: add with acres, acres column added to the tab, edit acres', () => {
+  assert.ok(call({ action: 'saveField', isNew: true, field: { Field: 'North Pivot', Acres: 125.5, InsuranceUnit: '0001-0002' } }).ok);
+  assert.match(call({ action: 'saveField', isNew: true, field: { Field: 'Bad', Acres: -3 } }).error, /Acres/);
+  assert.ok(call({ action: 'saveField', isNew: false, field: { Field: 'North Pivot', Acres: 126 } }).ok);
+  const f = call({ action: 'officeData' }).fields.find(x => x.Field === 'North Pivot');
+  assert.equal(f.Acres, 126); assert.equal(f.InsuranceUnit, '0001-0002');
+});
+ok('splits: replace one field-year, must total 100, others untouched, scale sees it', () => {
+  assert.match(call({ action: 'saveShares', fieldName: 'North Pivot', cropYear: 2026, shares: [{ Owner: 'Roenbaugh Farms', SharePct: 60 }, { Owner: 'Smith Land LLC', SharePct: 30 }] }).error, /add to 90%/);
+  assert.match(call({ action: 'saveShares', fieldName: 'North Pivot', cropYear: 2026, shares: [{ Owner: 'Roenbaugh Farms', SharePct: 50 }, { Owner: 'Roenbaugh Farms', SharePct: 50 }] }).error, /twice/);
+  assert.ok(call({ action: 'saveShares', fieldName: 'North Pivot', cropYear: 2026, shares: [{ Owner: 'Roenbaugh Farms', SharePct: 66.667 }, { Owner: 'Smith Land LLC', SharePct: 33.333 }] }).ok);
+  assert.ok(call({ action: 'saveShares', fieldName: 'North Pivot', cropYear: 2026, shares: [{ Owner: 'Roenbaugh Farms', SharePct: 50 }, { Owner: 'Smith Land LLC', SharePct: 50 }] }).ok);
+  const sh = call({ action: 'lists' }).shares;
+  assert.deepEqual(sh.filter(x => x.Field === 'North Pivot').map(x => [x.Owner, x.SharePct]), [['Roenbaugh Farms', 50], ['Smith Land LLC', 50]]);
+  assert.equal(sh.filter(x => x.Field === 'TEST Share Quarter').length, 2);   // other fields untouched
+  assert.ok(call({ action: 'saveShares', fieldName: 'North Pivot', cropYear: 2026, shares: [] }).ok);   // clearing is allowed
+  assert.equal(call({ action: 'lists' }).shares.filter(x => x.Field === 'North Pivot').length, 0);
+});
 console.log(`\n${n} passed`);

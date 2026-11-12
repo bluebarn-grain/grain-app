@@ -36,8 +36,35 @@ const post = b => fetch(BASE + 'api', { method: 'POST', body: JSON.stringify({ k
   await page.waitForFunction(() => /Closed/.test(document.querySelector('tr[data-contract="AND-2611"]').innerText));
   const atScale = await page.evaluate(() => window.BBG_APP.L().contracts.map(c => c.ContractNo)); console.log('   scale list now:', atScale);
 
+  step('add a landlord');
+  await page.click('[data-tab="customers"]'); await page.click('#kNew');
+  await page.fill('#kName', 'Smith Land LLC'); await page.selectOption('#kType', 'Landlord'); await page.fill('#kPhone', '620-555-0101'); await page.fill('#kEmail', 'smith@example.com');
+  await page.click('#kSave'); await page.waitForSelector('#custDlg', { state: 'hidden' }); await page.waitForSelector('tr[data-customer="Smith Land LLC"]');
+  await page.screenshot({ path: shots + '/office-customers.png', fullPage: true });
+
+  step('fields: missing-split warning, new field with acres and a split');
+  await page.click('[data-tab="fieldsetup"]'); console.log('   banner:', await page.$eval('#oBody .banner', b => b.textContent).catch(() => 'none'));
+  await page.click('#fNew'); await page.fill('#fName', 'North Pivot'); await page.fill('#fAcres', '125.5'); await page.fill('#fUnit', '0001-0002');
+  console.log('   default split:', await page.$$eval('#fShares select', ss => ss.map(s => s.value)), await page.textContent('#fTotal'));
+  await page.fill('#fShares input[data-k="SharePct"]', '60'); await page.click('#fAddOwner');
+  await page.selectOption('#fShares select[data-si="1"]', 'Smith Land LLC'); await page.fill('#fShares input[data-si="1"]', '30');
+  console.log('   total shows:', await page.textContent('#fTotal'));
+  await page.click('#fSave'); console.log('   says:', await page.textContent('#fMsg'));
+  await page.fill('#fShares input[data-si="1"]', '40'); await page.screenshot({ path: shots + '/office-field-dialog.png' });
+  await page.click('#fSave'); await page.waitForSelector('#fieldDlg', { state: 'hidden' }); await page.waitForSelector('tr[data-field="North Pivot"]');
+  console.log('   row:', (await page.textContent('tr[data-field="North Pivot"]')).replace(/\s+/g, ' '));
+  step('set acres and a 2026 split on an existing field');
+  await page.click('tr[data-field="TEST Home Place"]'); await page.fill('#fAcres', '160');
+  console.log('   existing split:', await page.$$eval('#fShares select', ss => ss.map(s => s.value)), '| note:', await page.textContent('#fSplitNote'));
+  await page.click('#fSave'); await page.waitForSelector('#fieldDlg', { state: 'hidden' });
+  await page.waitForFunction(() => /160/.test(document.querySelector('tr[data-field="TEST Home Place"]').textContent));
+  await page.screenshot({ path: shots + '/office-fieldsetup.png', fullPage: true });
+  const scaleShares = await page.evaluate(() => window.BBG_APP.L().shares.filter(s => s.Field === 'North Pivot').map(s => s.Owner + ' ' + s.SharePct));
+  console.log('   scale sees North Pivot split:', scaleShares);
+
   step('field report, expand a field');
   await page.click('[data-tab="fields"]'); await page.click('tr[data-open^="TEST Share Quarter"]');
+  console.log('   Home Place row:', (await page.textContent('tr[data-open^="TEST Home Place"]')).replace(/\s+/g, ' '));
   await page.screenshot({ path: shots + '/office-fields.png', fullPage: true });
   console.log('   ', (await page.textContent('#oBody')).replace(/\s+/g, ' ').slice(0, 400));
 
