@@ -51,7 +51,6 @@ function testSheet() {
     Fields: [['Field','OpsCenterName','FSAFarm','FSATract','InsuranceUnit','Active','Notes'],['TEST Home Place','','','','',true,''],['TEST Share Quarter','','','','',true,''],['TEST No Split','','','','',true,'']],
     Shares: [['Field','CropYear','Owner','SharePct'],['TEST Home Place',2026,'Roenbaugh Farms',100],['TEST Share Quarter',2026,'Roenbaugh Farms',50],['TEST Share Quarter',2026,'TEST Landlord A',50]],
     Commodities: [['Code','Commodity','LbPerBu','StdMoisturePct'],['C','Corn',56,15.5],['S','Sorghum',56,14]],
-    Trucks: [['Truck','Driver','Hauler',''],['196 Triple 8','Jose','']],
     Contracts: [['ContractNo','Buyer','Commodity','CropYear','Bushels','ShipStart','ShipEnd','Status','Notes'],['TEST-C1','The Andersons','Corn',2026,10000,'','','Open',''],['TEST-C2','TEST Buyer B','Sorghum',2026,5000,'','','Open','']],
     Settings: [['Key','Value','Note'],['NextTicketNo',900001,''],['NextBOLNo',9000001,''],['CutoverDate','2026-11-11',''],['FMDefault',0,'']]
   });

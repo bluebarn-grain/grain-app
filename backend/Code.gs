@@ -100,7 +100,6 @@ function lists_(ss) {
   var fields = rows_(tab_(ss, 'Fields')).filter(function (r) { return r.Field && isActive_(r.Active); });
   var shares = rows_(tab_(ss, 'Shares')).filter(function (r) { return r.Field && r.Owner; });
   var commodities = rows_(tab_(ss, 'Commodities')).filter(function (r) { return r.Commodity; });
-  var trucks = rows_(tab_(ss, 'Trucks')).filter(function (r) { return r.Truck; });
   var settings = {};
   rows_(tab_(ss, 'Settings')).forEach(function (r) { if (r.Key) settings[r.Key] = r.Value; });
   var delivered = {};
@@ -111,7 +110,7 @@ function lists_(ss) {
   });
   var contracts = rows_(tab_(ss, 'Contracts')).filter(function (r) { return r.ContractNo && String(r.Status) !== 'Closed'; })
     .map(function (r) { r.DeliveredBu = Math.round((delivered[r.ContractNo] || 0) * 100) / 100; return r; });
-  return { customers: customers, fields: fields, shares: shares, commodities: commodities, trucks: trucks, settings: settings, contracts: contracts };
+  return { customers: customers, fields: fields, shares: shares, commodities: commodities, settings: settings, contracts: contracts };
 }
 
 function splitNet_(netLb, lbPerBu, shares) {

@@ -4,7 +4,7 @@
 (() => {
 'use strict';
 const P = window.BBG;
-const VERSION = '0.1.1';
+const VERSION = '0.1.2';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt0 = n => (n == null || isNaN(n)) ? '—' : Math.round(n).toLocaleString('en-US');
@@ -51,14 +51,13 @@ const S = {
   diag: { scale: [], moist: [], other: [], sync: [] }
 };
 const DEFAULT_CONFIG = { backendUrl: '', key: '', station: 'Scale house', operator: '', baud: 9600, test: true, sim: false };
-const EMPTY_LISTS = { customers: [], fields: [], shares: [], commodities: [{ Commodity: 'Corn', LbPerBu: 56 }, { Commodity: 'Sorghum', LbPerBu: 56 }, { Commodity: 'Wheat', LbPerBu: 60 }, { Commodity: 'Soybeans', LbPerBu: 60 }], trucks: [], contracts: [], settings: {} };
+const EMPTY_LISTS = { customers: [], fields: [], shares: [], commodities: [{ Commodity: 'Corn', LbPerBu: 56 }, { Commodity: 'Sorghum', LbPerBu: 56 }, { Commodity: 'Wheat', LbPerBu: 60 }, { Commodity: 'Soybeans', LbPerBu: 60 }], contracts: [], settings: {} };
 // Sample lists used only in simulator mode before a backend is connected, so the app can be tried anywhere.
 const DEMO_LISTS = {
   ...EMPTY_LISTS,
   customers: [{ Customer: 'Roenbaugh Farms', Type: 'Operator' }, { Customer: 'The Andersons', Type: 'Buyer' }, { Customer: 'TEST Buyer B', Type: 'Buyer' }, { Customer: 'TEST Landlord A', Type: 'Landlord' }],
   fields: [{ Field: 'TEST Home Place' }, { Field: 'TEST Share Quarter' }],
   shares: [{ Field: 'TEST Home Place', CropYear: 2026, Owner: 'Roenbaugh Farms', SharePct: 100 }, { Field: 'TEST Share Quarter', CropYear: 2026, Owner: 'Roenbaugh Farms', SharePct: 50 }, { Field: 'TEST Share Quarter', CropYear: 2026, Owner: 'TEST Landlord A', SharePct: 50 }],
-  trucks: [{ Truck: '196 Triple 8' }, { Truck: '22 Friesen Trucking' }, { Truck: '31 Friesen Trucking' }],
   contracts: [{ ContractNo: 'TEST-C1', Buyer: 'The Andersons', Commodity: 'Corn', CropYear: 2026, Bushels: 10000, DeliveredBu: 0 }, { ContractNo: 'TEST-C2', Buyer: 'TEST Buyer B', Commodity: 'Sorghum', CropYear: 2026, Bushels: 5000, DeliveredBu: 0 }],
   settings: { FMDefault: 0 }
 };
@@ -198,7 +197,6 @@ function fillLists() {
   setOptions($('comm'), l.commodities.map(c => [c.Commodity, c.Commodity]));
   const y = new Date().getFullYear();
   setOptions($('cy'), [y, y - 1, y - 2].map(v => [v, v]), $('cy').value || String(y));
-  $('truckList').innerHTML = l.trucks.map(t => `<option value="${esc(t.Truck)}">`).join('');
 }
 function fillContracts(keep) {
   const b = $('buyer').value;
@@ -393,7 +391,7 @@ const wire = t => ({
 });
 async function refreshLists() {
   const j = await api({ action: 'lists' });
-  S.lists = { customers: j.customers, fields: j.fields, shares: j.shares, commodities: j.commodities.length ? j.commodities : EMPTY_LISTS.commodities, trucks: j.trucks, contracts: j.contracts, settings: j.settings };
+  S.lists = { customers: j.customers, fields: j.fields, shares: j.shares, commodities: j.commodities.length ? j.commodities : EMPTY_LISTS.commodities, contracts: j.contracts, settings: j.settings };
   S.listsAt = Date.now();
   await DB.put('kv', S.lists, 'lists'); await DB.put('kv', S.listsAt, 'listsAt');
   fillLists(); loadDetail();
