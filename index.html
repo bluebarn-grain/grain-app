@@ -173,11 +173,36 @@
       <div class="f full"><label for="cEmail">Email for nightly shipments (leave blank to use the buyer's)</label><input id="cEmail" type="email" autocomplete="off"></div>
       <div class="f full"><label for="cNotes">Notes</label><input id="cNotes" autocomplete="off"></div>
     </div>
+    <div class="splitbox" id="cPricingBox">
+      <div class="ohead"><span class="label">Pricing</span><button class="ghost" type="button" id="pAdd">Add pricing</button></div>
+      <div id="cPricing"></div>
+    </div>
     <p class="hint" id="cMsg"></p>
     <div class="foot">
       <span class="hint" id="cShipped"></span>
       <div class="footbtns"><button class="ghost" type="button" id="cCancel">Cancel</button><button class="big small" type="button" id="cSave">Save</button></div>
     </div>
+  </form>
+</dialog>
+
+<dialog id="priceDlg">
+  <form method="dialog">
+    <h2 id="pTitle">Add pricing</h2>
+    <p class="hint">Futures + basis − fees = flat price. Leave futures or basis blank if it isn't set yet and fill it in later. If the contract was written at a flat price, leave futures and basis blank and enter the flat price.</p>
+    <div class="form">
+      <div class="f"><label for="pDate">Date priced</label><input id="pDate" type="date"></div>
+      <div class="f"><label for="pBu">Bushels</label><input id="pBu" inputmode="decimal"></div>
+      <div class="f"><label for="pMonth">Futures month</label><input id="pMonth" placeholder="e.g. Mar 27" autocomplete="off"></div>
+      <div class="f"><label for="pFut">Futures ($/bu)</label><input id="pFut" inputmode="decimal" placeholder="4.4525"></div>
+      <div class="f"><label for="pBasis">Basis ($/bu, minus for under)</label><input id="pBasis" inputmode="text" placeholder="-0.38"></div>
+      <div class="f"><label for="pFees">Fees ($/bu)</label><input id="pFees" inputmode="decimal" placeholder="0"></div>
+      <div class="f" id="pFlatBox"><label for="pFlat">Flat price ($/bu)</label><input id="pFlat" inputmode="decimal"></div>
+      <div class="f"><label for="pBy">Entered by</label><input id="pBy" autocomplete="off"></div>
+      <div class="f full"><label for="pNote">Note</label><input id="pNote" autocomplete="off"></div>
+    </div>
+    <div class="bookline big2" id="pResult"></div>
+    <p class="hint" id="pMsg"></p>
+    <div class="foot"><button class="ghost bad" type="button" id="pVoid">Delete line</button><div class="footbtns"><button class="ghost" type="button" id="pCancel">Cancel</button><button class="big small" type="button" id="pSave">Save</button></div></div>
   </form>
 </dialog>
 

@@ -6,7 +6,7 @@
 const R = window.BBR;
 const $ = id => document.getElementById(id);
 let A;                                  // the scale app's helpers (window.BBG_APP)
-const O = { data: null, tab: 'contracts', year: '', open: {}, busy: false, adjType: '', contract: null, customer: null, field: null, shareRows: [] };
+const O = { pricingNo: null, data: null, tab: 'contracts', year: '', open: {}, busy: false, adjType: '', contract: null, customer: null, field: null, shareRows: [] };
 
 const n0 = v => A.fmt0(v), n2 = v => A.fmt2(v), e = v => A.esc(v);
 const day = v => { if (!v) return ''; const d = new Date(v); return isNaN(d) ? '' : `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`; };
@@ -39,7 +39,7 @@ function status(msg) {
   const d = O.data;
   $('oStatus').textContent = msg || (d ? `Updated ${new Date(d.at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` + (testMode() ? ' · TEST MODE: test tickets included' : '') : '');
 }
-const D = () => O.data || { tickets: [], splits: [], allocations: [], adjustments: [], purchases: [], contracts: [], customers: [], fields: [], shares: [], commodities: [], settings: {} };
+const D = () => O.data || { tickets: [], splits: [], allocations: [], adjustments: [], purchases: [], pricing: [], contracts: [], customers: [], fields: [], shares: [], commodities: [], settings: {} };
 function years() {
   const ys = new Set();
   D().tickets.forEach(t => t.CropYear && ys.add(String(t.CropYear)));
@@ -73,6 +73,7 @@ function render() {
 // ---------- contracts ----------
 function contracts() {
   const applied = R.appliedByContract(D(), opt());
+  const pr = R.contractPricing(D(), opt());
   const half = (Number(D().settings.TypicalLoadBu) || 1000) / 2;
   const cs = D().contracts.filter(c => !O.year || String(c.CropYear) === String(O.year))
     .sort((a, b) => (a.Status === 'Closed') - (b.Status === 'Closed') || String(a.Buyer).localeCompare(String(b.Buyer)) || new Date(a.ShipStart || 0) - new Date(b.ShipStart || 0));
@@ -82,11 +83,79 @@ function contracts() {
     return `<tr data-contract="${e(c.ContractNo)}" class="${state === 'Closed' || state === 'Filled' ? 'closed' : ''}">
       <td><b>${e(c.ContractNo)}</b></td><td>${e(c.Buyer)}</td><td>${e(c.Commodity)} ${e(c.CropYear)}</td>
       <td class="n">${n0(c.Bushels)}</td><td class="n">${n2(shipped)}</td><td class="n${left < 0 ? ' neg' : ''}">${n2(left)}</td>
+      <td>${pricedCell(pr[String(c.ContractNo)])}</td>
       <td>${day(c.ShipStart)}${c.ShipEnd ? ' – ' + day(c.ShipEnd) : ''}</td><td>${state}</td></tr>`;
   }).join('');
   return `<div class="ohead"><h2>Contracts</h2><button class="big small" type="button" id="cNew">New contract</button></div>
-    ${cs.length ? `<div class="tblwrap"><table><thead><tr><th>Contract</th><th>Buyer</th><th>Crop</th><th class="n">Bushels</th><th class="n">Shipped</th><th class="n">Left</th><th>Ship window</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></div>
+    ${cs.length ? `<div class="tblwrap"><table><thead><tr><th>Contract</th><th>Buyer</th><th>Crop</th><th class="n">Bushels</th><th class="n">Shipped</th><th class="n">Left</th><th>Priced</th><th>Ship window</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></div>
     <p class="hint">Tap a contract to change it. Filled and closed contracts don't show at the scale.</p>` : '<div class="empty">No contracts yet. Tap New contract to add one.</div>'}`;
+}
+const money = v => v == null || v === '' ? '—' : (Number(v) < 0 ? '−$' : '$') + Math.abs(Number(v)).toFixed(4).replace(/(\.\d\d)00$/, '$1').replace(/(\.\d\d\d)0$/, '$1');
+function pricedCell(p) {
+  if (!p) return '';
+  const parts = [];
+  if (p.priced) parts.push(`${n0(p.priced)} @ ${money(p.avgFlat)}`);
+  if (p.partial) parts.push(`${n0(p.partial)} part`);
+  if (!p.priced && !p.partial) parts.push('<span class="hint">none</span>');
+  return parts.join(' · ') + (p.shippedUnpriced ? ` <span class="tag">${n0(p.shippedUnpriced)} shipped unpriced</span>` : '');
+}
+function drawPricing() {
+  const c = O.contract && D().contracts.find(x => String(x.ContractNo) === O.contract);
+  $('cPricingBox').hidden = !c;
+  if (!c) return;
+  const p = R.contractPricing(D(), opt())[O.contract];
+  $('cPricing').innerHTML = (p.lines.length ? `<div class="tblwrap"><table><thead><tr><th>Date</th><th class="n">Bushels</th><th>Month</th><th class="n">Futures</th><th class="n">Basis</th><th class="n">Fees</th><th class="n">Flat</th></tr></thead><tbody>
+    ${p.lines.map(l => `<tr data-pricing="${e(l.PricingNo)}"><td>${day(l.Date)}</td><td class="n">${n0(l.Bushels)}</td><td>${e(l.FuturesMonth)}</td><td class="n">${money(l.Futures)}</td><td class="n">${money(l.Basis)}</td><td class="n">${money(l.Fees)}</td><td class="n"><b>${l.FlatPrice === '' || l.FlatPrice == null ? '<span class="tag">open</span>' : money(l.FlatPrice)}</b></td></tr>`).join('')}
+    </tbody></table></div>` : '<div class="hint">Not priced yet.</div>') +
+    `<div class="hint">Priced ${n0(p.priced)}${p.avgFlat != null ? ' @ ' + money(p.avgFlat) + ' avg' : ''} · partly priced ${n0(p.partial)} · unpriced ${n0(p.unpriced)} bu${p.shippedUnpriced ? ` · <b class="neg">${n0(p.shippedUnpriced)} bu shipped with no price</b>` : ''}. Tap a line to change it.</div>`;
+  $('cPricing').querySelectorAll('[data-pricing]').forEach(tr => tr.onclick = () => openPricing(tr.dataset.pricing));
+  $('pAdd').disabled = p.priced + p.partial >= p.bushels - 0.005;
+}
+function openPricing(no) {
+  const l = no ? D().pricing.find(x => String(x.PricingNo) === String(no)) : null;
+  const p = R.contractPricing(D(), opt())[O.contract];
+  O.pricingNo = l ? Number(l.PricingNo) : null;
+  $('pTitle').textContent = (l ? 'Pricing line' : 'Add pricing') + ` — ${O.contract}`;
+  const v = x => x === '' || x == null ? '' : String(x);
+  $('pDate').value = l ? isoDay(l.Date) : today(); $('pBu').value = l ? l.Bushels : (p.unpriced || '');
+  $('pMonth').value = l ? v(l.FuturesMonth) : ''; $('pFut').value = l ? v(l.Futures) : ''; $('pBasis').value = l ? v(l.Basis) : '';
+  $('pFees').value = l ? v(l.Fees) : ''; $('pFlat').value = l && !v(l.Futures) && !v(l.Basis) ? v(l.FlatPrice) : '';
+  $('pNote').value = l ? v(l.Note) : ''; $('pBy').value = $('pBy').value || (A.S.config && A.S.config.operator) || '';
+  $('pVoid').hidden = !l; $('pVoid').textContent = 'Delete line'; $('pMsg').textContent = '';
+  pricePreview(); $('priceDlg').showModal();
+}
+const numIn = id => { const t = String($(id).value).replace(/[$,\s]/g, '').replace(/^\((.*)\)$/, '-$1'); return t === '' ? '' : Number(t); };
+function pricePreview() {
+  const f = numIn('pFut'), b = numIn('pBasis'), fee = numIn('pFees') || 0, flat = numIn('pFlat');
+  $('pFlatBox').hidden = f !== '' || b !== '';
+  let t = '';
+  if (f !== '' && b !== '' && !isNaN(f) && !isNaN(b)) t = `Flat price <b>${money(f + b - fee)}</b> = ${money(f)} ${b < 0 ? '−' : '+'} ${money(Math.abs(b))}${fee ? ' − ' + money(fee) : ''}`;
+  else if (f !== '' && !isNaN(f)) t = 'Futures set; basis still open (HTA).';
+  else if (b !== '' && !isNaN(b)) t = 'Basis set; futures still open.';
+  else if (flat !== '' && !isNaN(flat)) t = `Flat price <b>${money(flat)}</b>`;
+  const bu = numIn('pBu');
+  if (t && bu > 0 && f !== '' && b !== '') t += ` · ${n0(bu)} bu ≈ $${n2(bu * (f + b - fee))}`;
+  else if (t && bu > 0 && flat !== '' && f === '' && b === '') t += ` · ${n0(bu)} bu ≈ $${n2(bu * flat)}`;
+  $('pResult').innerHTML = t;
+}
+async function savePricing() {
+  const f = numIn('pFut'), b = numIn('pBasis'), fee = numIn('pFees'), flat = numIn('pFlat'), bu = numIn('pBu');
+  if (!(bu > 0)) return msg('pMsg', 'Enter the bushels priced.');
+  if ([f, b, fee, flat].some(x => x !== '' && isNaN(x))) return msg('pMsg', 'Prices must be numbers, like 4.4525 or -0.38.');
+  if (f === '' && b === '' && flat === '') return msg('pMsg', 'Enter futures, basis, or a flat price.');
+  if (!$('pBy').value.trim()) return msg('pMsg', 'Enter who is recording it.');
+  $('pSave').disabled = true; msg('pMsg', 'Saving…');
+  try {
+    await A.api({ action: 'savePricing', pricing: { PricingNo: O.pricingNo || '', ContractNo: O.contract, Date: $('pDate').value, Bushels: bu, FuturesMonth: $('pMonth').value, Futures: f, Basis: b, Fees: fee, FlatPrice: f === '' && b === '' ? flat : '', Note: $('pNote').value.trim(), By: $('pBy').value.trim() } });
+    $('priceDlg').close(); A.toast(`Pricing saved on ${O.contract}`);
+    await load(true); drawPricing();
+  } catch (err) { msg('pMsg', err.message); }
+  finally { $('pSave').disabled = false; }
+}
+async function voidPricing() {
+  if ($('pVoid').textContent !== 'Tap again to delete') { $('pVoid').textContent = 'Tap again to delete'; return; }
+  try { await A.api({ action: 'voidPricing', pricingNo: O.pricingNo, by: (A.S.config && A.S.config.operator) || '' }); $('priceDlg').close(); A.toast('Pricing line deleted'); await load(true); drawPricing(); }
+  catch (err) { msg('pMsg', err.message); }
 }
 function openContract(no) {
   const c = no ? D().contracts.find(x => String(x.ContractNo) === String(no)) : null;
@@ -105,6 +174,7 @@ function openContract(no) {
   const shipped = c ? (R.appliedByContract(D(), opt())[String(c.ContractNo)] || 0) : 0;
   $('cShipped').textContent = c ? `${n2(shipped)} bu shipped so far` : '';
   $('cMsg').textContent = '';
+  drawPricing();
   $('contractDlg').showModal();
   if (!c) $('cNo').focus();
 }
@@ -287,11 +357,12 @@ function inventory() {
       ${r.landlordHeld ? r.owners.filter(o => o.type !== 'Operator' && o.balance).map(o => line(`&nbsp;&nbsp;Still ${e(o.owner)}'s`, -o.balance)).join('') + line(`&nbsp;&nbsp;Yours`, r.farmOwned, 'tot') : ''}
       ${line('Open contracts to ship', -r.openContracts)}
       ${line('Unsold (yours)', r.unsold, 'tot')}
+      ${r.shippedUnpriced ? `<span class="neg">Shipped, not priced yet</span><span class="n neg">${n2(r.shippedUnpriced)}</span>` : ''}
     </div>
     ${r.contracts.length ? `<div class="hint">${r.contracts.map(c => `${e(c.contractNo)} ${e(c.buyer)}: ${n0(c.left)} left`).join(' · ')}</div>` : ''}
     <div class="rowbtns">${r.landlordHeld ? `<button class="ghost" type="button" data-buy="1" data-c="${e(r.commodity)}" data-y="${e(r.cropYear)}">Buy landlord grain</button>` : ''}<button class="ghost" type="button" data-adj="Measured" data-c="${e(r.commodity)}" data-y="${e(r.cropYear)}">Bins measured</button><button class="ghost" type="button" data-adj="BinsEmpty" data-c="${e(r.commodity)}" data-y="${e(r.cropYear)}">Bins empty — zero out</button></div>
   </div>`).join('')}</div>
-  <p class="hint">On hand = opening + dry bushels in − bushels out ± adjustments. Landlord grain stays theirs until you buy it on the Landlord grain tab. Unsold = your bushels − what's left to ship on open contracts.</p>`;
+  <p class="hint">On hand = opening + dry bushels in − bushels out ± adjustments. Landlord grain stays theirs until you buy it on the Landlord grain tab. Unsold = your bushels − what's left to ship on open contracts. "Shipped, not priced yet" is grain already hauled on contract bushels that have no flat price.</p>`;
 }
 
 // ---------- landlord grain ----------
@@ -498,6 +569,9 @@ function init() {
   $('oPrint').onclick = printReport;
   $('cSave').onclick = saveContract; $('cCancel').onclick = () => $('contractDlg').close();
   $('aSave').onclick = saveAdj; $('aCancel').onclick = () => $('adjDlg').close();
+  $('pAdd').onclick = () => openPricing(null);
+  $('pSave').onclick = savePricing; $('pCancel').onclick = () => $('priceDlg').close(); $('pVoid').onclick = voidPricing;
+  for (const id of ['pFut', 'pBasis', 'pFees', 'pFlat', 'pBu']) $(id).addEventListener('input', pricePreview);
   $('kSave').onclick = saveCustomer; $('kCancel').onclick = () => $('custDlg').close();
   $('fSave').onclick = saveField; $('fCancel').onclick = () => $('fieldDlg').close();
   $('bSave').onclick = saveBuy; $('bCancel').onclick = () => $('buyDlg').close();

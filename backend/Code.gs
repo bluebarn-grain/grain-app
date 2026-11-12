@@ -64,6 +64,8 @@ function handle_(p) {
       case 'saveShares': return out_(merge_({ ok: true }, saveShares_(ss, p.fieldName, p.cropYear, p.shares || [])));
       case 'savePurchase': return out_(merge_({ ok: true }, savePurchase_(ss, p.purchase || {})));
       case 'voidPurchase': return out_(merge_({ ok: true }, voidPurchase_(ss, p.purchaseNo, p.by)));
+      case 'savePricing': return out_(merge_({ ok: true }, savePricing_(ss, p.pricing || {})));
+      case 'voidPricing': return out_(merge_({ ok: true }, voidPricing_(ss, p.pricingNo, p.by)));
       case 'voidAdjustment': return out_(merge_({ ok: true }, voidAdjustment_(ss, p.adjNo, p.by)));
       default: return out_({ ok: false, error: 'Unknown action: ' + p.action });
     }
@@ -514,6 +516,7 @@ function officeData_(ss) {
     allocations: opt('TicketContracts'),
     adjustments: opt('Adjustments').filter(function (a) { return String(a.Status) !== 'Void'; }),
     purchases: opt('Purchases').filter(function (a) { return String(a.Status) !== 'Void'; }),
+    pricing: opt('Pricing').filter(function (a) { return String(a.Status) !== 'Void'; }),
     contracts: rows_(tab_(ss, 'Contracts')).filter(function (c) { return c.ContractNo; }),
     customers: rows_(tab_(ss, 'Customers')).filter(function (c) { return c.Customer; }),
     fields: rows_(tab_(ss, 'Fields')).filter(function (f) { return f.Field; }),
@@ -708,5 +711,63 @@ function voidPurchase_(ss, no, by) {
       return { purchaseNo: Number(no) };
     }
     throw new Error('Purchase ' + no + ' was not found');
+  } finally { lock.releaseLock(); }
+}
+
+
+/* ---- contract pricing ---- */
+var PRICING_COLUMNS = ['PricingNo', 'ContractNo', 'Date', 'Bushels', 'FuturesMonth', 'Futures', 'Basis', 'Fees', 'FlatPrice', 'Note', 'By', 'CreatedAt', 'Status'];
+function price_(v, what) {
+  if (v === '' || v == null) return '';
+  var n = Math.round(Number(v) * 10000) / 10000;
+  if (isNaN(n)) throw new Error(what + ' must be a number, or blank');
+  return n;
+}
+/**
+ * One pricing line on a contract. Futures + basis − fees = flat. A line can carry only the basis
+ * (futures set later) or only the futures (basis set later); fill in the rest by saving the same
+ * PricingNo again. A flat price can also be entered on its own.
+ */
+function savePricing_(ss, p) {
+  var no = String(p.ContractNo || '').trim();
+  var c = rows_(tab_(ss, 'Contracts')).filter(function (x) { return String(x.ContractNo) === no; })[0];
+  if (!c) throw new Error('Contract ' + no + ' was not found');
+  var bu = Math.round(Number(p.Bushels) * 100) / 100;
+  if (!(bu > 0)) throw new Error('Bushels must be more than 0');
+  var fut = price_(p.Futures, 'Futures'), basis = price_(p.Basis, 'Basis'), fees = price_(p.Fees, 'Fees'), flat = price_(p.FlatPrice, 'Flat price');
+  if (fut !== '' && basis !== '') flat = Math.round((fut + basis - (fees === '' ? 0 : fees)) * 10000) / 10000;
+  if (fut === '' && basis === '' && flat === '') throw new Error('Enter futures, basis, or a flat price');
+  if (!String(p.By || '').trim()) throw new Error('Enter who is recording the pricing');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var t = sheetOrNew_(ss, 'Pricing', PRICING_COLUMNS), sh = t.sh, m = t.cols.map, v = sh.getDataRange().getValues();
+    var at = -1, last = 0, other = 0;
+    for (var i = 1; i < v.length; i++) {
+      var pn = Number(v[i][m.PricingNo - 1]) || 0; last = Math.max(last, pn);
+      if (p.PricingNo && pn === Number(p.PricingNo)) { at = i + 1; continue; }
+      if (String(v[i][m.ContractNo - 1]) === no && String(v[i][m.Status - 1]) !== 'Void') other += Number(v[i][m.Bushels - 1]) || 0;
+    }
+    if (p.PricingNo && at < 0) throw new Error('Pricing line ' + p.PricingNo + ' was not found');
+    if (other + bu > Number(c.Bushels) + 0.005) throw new Error('That prices ' + (Math.round((other + bu) * 100) / 100) + ' bu on a ' + c.Bushels + ' bu contract. Only ' + (Math.round((Number(c.Bushels) - other) * 100) / 100) + ' bu are left to price.');
+    var row = at > 0 ? v[at - 1].slice() : new Array(t.cols.width).fill('');
+    while (row.length < t.cols.width) row.push('');
+    var set = function (k, val) { row[m[k] - 1] = val; };
+    if (at < 0) { set('PricingNo', last + 1); set('CreatedAt', new Date()); set('Status', 'Active'); }
+    set('ContractNo', no); set('Date', date_(p.Date) || new Date()); set('Bushels', bu); set('FuturesMonth', String(p.FuturesMonth || '').trim());
+    set('Futures', fut); set('Basis', basis); set('Fees', fees); set('FlatPrice', flat); set('Note', p.Note || ''); set('By', String(p.By).trim());
+    if (at > 0) sh.getRange(at, 1, 1, t.cols.width).setValues([row]); else sh.getRange(sh.getLastRow() + 1, 1, 1, t.cols.width).setValues([row]);
+    return { pricingNo: at > 0 ? Number(p.PricingNo) : last + 1, flatPrice: flat };
+  } finally { lock.releaseLock(); }
+}
+function voidPricing_(ss, no, by) {
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var sh = tab_(ss, 'Pricing'), m = ensureColumns_(sh, PRICING_COLUMNS).map, v = sh.getDataRange().getValues();
+    for (var i = 1; i < v.length; i++) if (Number(v[i][m.PricingNo - 1]) === Number(no)) {
+      sh.getRange(i + 1, m.Status).setValue('Void');
+      sh.getRange(i + 1, m.Note).setValue(String(v[i][m.Note - 1] || '') + ' [voided by ' + (by || '?') + ' ' + new Date().toLocaleDateString() + ']');
+      return { pricingNo: Number(no) };
+    }
+    throw new Error('Pricing line ' + no + ' was not found');
   } finally { lock.releaseLock(); }
 }

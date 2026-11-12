@@ -126,6 +126,8 @@
       r.openContracts += left;
       r.contracts.push({ contractNo: String(c.ContractNo), buyer: c.Buyer, bushels: num(c.Bushels), shipped: r2(applied[String(c.ContractNo)] || 0), left: r2(left) });
     });
+    const cp = contractPricing(data, opt);
+    (data.contracts || []).forEach(c => { const p = cp[String(c.ContractNo)]; if (p && p.shippedUnpriced) { const r = row(c.Commodity, c.CropYear); r.shippedUnpriced = (r.shippedUnpriced || 0) + p.shippedUnpriced; } });
     return Object.values(rows).map(r => {
       const onHand = r.opening + r.inDry - r.out + r.adjust;
       const f = own(r, farm);
@@ -142,7 +144,7 @@
       return { commodity: r.commodity, cropYear: r.cropYear, opening: r2(r.opening), inDry: r2(r.inDry), inWet: r2(r.inWet), out: r2(r.out), adjust: r2(r.adjust), writeOff: r2(r.writeOff),
         purchased: r2(r.purchased), loadsIn: r.loadsIn, loadsOut: r.loadsOut, contracts: r.contracts,
         onHand: r2(onHand), owners, landlordHeld: r2(landlordHeld), farmOwned: r2(farmOwned),
-        openContracts: r2(r.openContracts), unsold: r2(farmOwned - r.openContracts) };
+        openContracts: r2(r.openContracts), unsold: r2(farmOwned - r.openContracts), shippedUnpriced: r2(r.shippedUnpriced || 0) };
     }).filter(r => !opt.cropYear || String(r.cropYear) === String(opt.cropYear))
       .sort((a, b) => String(b.cropYear).localeCompare(String(a.cropYear)) || String(a.commodity).localeCompare(String(b.commodity)));
   }
@@ -153,6 +155,23 @@
     inventory(data, opt).forEach(r => r.owners.filter(o => o.type !== 'Operator').forEach(o =>
       out.push({ landlord: o.owner, type: o.type, commodity: r.commodity, cropYear: r.cropYear, delivered: r2(o.inDry + o.opening), bought: o.sold, stillTheirs: o.balance })));
     return out.sort((a, b) => b.stillTheirs - a.stillTheirs || String(a.landlord).localeCompare(String(b.landlord)));
+  }
+
+  // Pricing per contract: priced (flat known), partly priced (basis or futures only), unpriced,
+  // bushel-weighted average flat price, and bushels shipped that have no price yet.
+  function contractPricing(data, opt = {}) {
+    const applied = appliedByContract(data, opt), out = {};
+    (data.contracts || []).forEach(c => {
+      const no = String(c.ContractNo);
+      const lines = (data.pricing || []).filter(p => String(p.ContractNo) === no && String(p.Status) !== 'Void');
+      let priced = 0, partial = 0, dollars = 0;
+      lines.forEach(p => { if (has(p.FlatPrice)) { priced += num(p.Bushels); dollars += num(p.Bushels) * num(p.FlatPrice); } else partial += num(p.Bushels); });
+      const shipped = applied[no] || 0;
+      out[no] = { contractNo: no, bushels: num(c.Bushels), priced: r2(priced), partial: r2(partial), unpriced: r2(Math.max(0, num(c.Bushels) - priced - partial)),
+        avgFlat: priced ? Math.round(dollars / priced * 10000) / 10000 : null, shipped: r2(shipped), shippedUnpriced: r2(Math.max(0, shipped - priced)),
+        lines: lines.slice().sort((a, b) => num(a.PricingNo) - num(b.PricingNo)) };
+    });
+    return out;
   }
 
   // Shrink written off when the bins were emptied, per commodity and crop year.
@@ -167,7 +186,7 @@
       });
   }
 
-  const api = { shrinkFactor, fieldReport, inventory, landlordGrain, writeOffs, appliedByContract, operatorName };
+  const api = { shrinkFactor, fieldReport, inventory, landlordGrain, writeOffs, appliedByContract, operatorName, contractPricing };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BBR = api;
 })(typeof window !== 'undefined' ? window : globalThis);

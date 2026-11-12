@@ -89,6 +89,21 @@ ok('bins empty write-off zeroes the book and shows shrink %', () => {
   near(R.inventory(voided)[0].onHand, book);
 });
 
+ok('pricing: priced, partly priced, unpriced, average flat, shipped unpriced', () => {
+  const d = { ...data, pricing: [
+    { PricingNo: 1, ContractNo: 'C1', Bushels: 2000, Futures: 4.40, Basis: -0.35, Fees: 0.02, FlatPrice: 4.03, Status: 'Active' },
+    { PricingNo: 2, ContractNo: 'C1', Bushels: 1000, Futures: 4.60, Basis: -0.30, Fees: 0, FlatPrice: 4.30, Status: 'Active' },
+    { PricingNo: 3, ContractNo: 'C1', Bushels: 1500, Basis: -0.30, FlatPrice: '', Status: 'Active' },
+    { PricingNo: 4, ContractNo: 'C1', Bushels: 500, FlatPrice: 5, Status: 'Void' }] };
+  const p = R.contractPricing(d).C1;
+  assert.deepEqual([p.priced, p.partial, p.unpriced], [3000, 1500, 500]);
+  assert.equal(p.avgFlat, 4.12);              // (2000×4.03 + 1000×4.30) / 3000
+  assert.equal(p.shippedUnpriced, 0);         // 1,000 shipped, 3,000 priced
+  const none = R.contractPricing(data).C1;
+  assert.equal(none.shippedUnpriced, 1000); assert.equal(none.avgFlat, null);
+  assert.equal(R.inventory(data)[0].shippedUnpriced, 1000);
+});
+
 // ---------- backend office actions ----------
 const ss = testSheet();
 const be = loadBackend(ss, { SHEET_ID: 'x', API_KEY: 'k' });
@@ -130,6 +145,20 @@ ok('adjustments: save, require a name, void', () => {
   assert.ok(call({ action: 'voidAdjustment', adjNo: 2, by: 'Chris' }).ok);
   d = call({ action: 'officeData' });
   assert.equal(d.adjustments.length, 1);
+});
+ok('pricing lines: add, flat worked out, partial then completed, can\'t over-price, void', () => {
+  call({ action: 'saveContract', isNew: true, contract: { ContractNo: 'P-1', Buyer: 'The Andersons', Commodity: 'Corn', CropYear: 2026, Bushels: 10000 } });
+  let j = call({ action: 'savePricing', pricing: { ContractNo: 'P-1', Bushels: 5000, FuturesMonth: 'Mar 27', Futures: 4.4525, Basis: -0.38, Fees: 0.015, By: 'Chris' } });
+  assert.ok(j.ok, j.error); assert.equal(j.flatPrice, 4.0575);
+  j = call({ action: 'savePricing', pricing: { ContractNo: 'P-1', Bushels: 5000, Basis: -0.35, By: 'Chris' } });
+  assert.ok(j.ok, j.error); assert.equal(j.flatPrice, '');
+  assert.match(call({ action: 'savePricing', pricing: { ContractNo: 'P-1', Bushels: 1, FlatPrice: 4, By: 'Chris' } }).error, /10001 bu on a 10000 bu contract/);
+  j = call({ action: 'savePricing', pricing: { PricingNo: 2, ContractNo: 'P-1', Bushels: 5000, FuturesMonth: 'May 27', Futures: 4.55, Basis: -0.35, By: 'Chris' } });
+  assert.ok(j.ok, j.error); assert.equal(j.flatPrice, 4.2);
+  assert.match(call({ action: 'savePricing', pricing: { ContractNo: 'P-1', Bushels: 5, By: 'Chris' } }).error, /futures, basis, or a flat price/);
+  assert.ok(call({ action: 'voidPricing', pricingNo: 1, by: 'Chris' }).ok);
+  const pr = call({ action: 'officeData' }).pricing;
+  assert.deepEqual(pr.map(x => [x.PricingNo, x.FlatPrice]), [[2, 4.2]]);
 });
 ok('customers: add, refuse duplicate (any case), edit, type required', () => {
   assert.ok(call({ action: 'saveCustomer', isNew: true, customer: { Customer: 'Smith Land LLC', Type: 'Landlord', Phone: '620-555-0101' } }).ok);

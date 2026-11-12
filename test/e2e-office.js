@@ -31,6 +31,23 @@ const post = b => fetch(BASE + 'api', { method: 'POST', body: JSON.stringify({ k
   step('duplicate contract # is refused');
   await page.click('#cNew'); await page.fill('#cNo', 'AND-2611'); await page.fill('#cBu', '5'); await page.click('#cSave');
   await page.waitForFunction(() => /already exists/.test(document.getElementById('cMsg').textContent)); console.log('   says:', await page.textContent('#cMsg')); await page.click('#cCancel');
+  step('price the shipping contract: one full line, one basis-only line');
+  await page.click('tr[data-contract="TEST-C1"]');
+  await page.click('#pAdd'); console.log('   default bushels:', await page.inputValue('#pBu'));
+  await page.fill('#pBu', '6000'); await page.fill('#pMonth', 'Mar 27'); await page.fill('#pFut', '4.4525'); await page.fill('#pBasis', '-0.38'); await page.fill('#pFees', '0.015');
+  console.log('   preview:', await page.textContent('#pResult'));
+  await page.click('#pSave'); await page.waitForSelector('#priceDlg', { state: 'hidden' });
+  await page.click('#pAdd'); await page.fill('#pBu', '5000'); await page.fill('#pBasis', '-0.35'); await page.click('#pSave');
+  console.log('   too many bushels says:', await page.textContent('#pMsg'));
+  await page.fill('#pBu', '4000'); console.log('   preview:', await page.textContent('#pResult')); await page.click('#pSave'); await page.waitForSelector('#priceDlg', { state: 'hidden' });
+  await page.screenshot({ path: shots + '/office-pricing.png' });
+  console.log('   ', (await page.textContent('#cPricing')).replace(/\s+/g, ' '));
+  step('fill in the futures on the basis-only line later');
+  await page.click('#cPricing tr[data-pricing="2"]'); await page.fill('#pMonth', 'May 27'); await page.fill('#pFut', '4.61');
+  console.log('   preview:', await page.textContent('#pResult')); await page.click('#pSave'); await page.waitForSelector('#priceDlg', { state: 'hidden' });
+  await page.click('#cCancel');
+  console.log('   contract row:', (await page.textContent('tr[data-contract="TEST-C1"]')).replace(/\s+/g, ' '));
+
   step('edit it: close it');
   await page.click('tr[data-contract="AND-2611"]'); await page.selectOption('#cStatus', 'Closed'); await page.click('#cSave'); await page.waitForSelector('#contractDlg', { state: 'hidden' });
   await page.waitForFunction(() => /Closed/.test(document.querySelector('tr[data-contract="AND-2611"]').innerText));
