@@ -119,9 +119,9 @@ dialog form{display:flex;flex-direction:column;gap:12px}
 /* Ticket printing: only the ticket goes to the printer. */
 #printArea{display:none}
 @media print{
-  @page{margin:.4in}
+  @page{size:8.5in 5.5in;margin:.35in .4in}
   html,body{background:#fff!important;color:#000!important;padding:0!important}
   body>*:not(#printArea){display:none!important}
   #printArea{display:block!important}
-  #printArea pre{font:12pt "Courier New",Courier,monospace;color:#000;margin:0;white-space:pre}
+  #printArea pre{font:10.5pt/1.15 "Courier New",Courier,monospace;color:#000;margin:0;white-space:pre}
 }

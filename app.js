@@ -326,30 +326,38 @@ async function voidTicket() {
 
 // ---------------- printing ----------------
 function ticketText(t) {
-  const W = 46, out = [];
-  const line = (a, b = '') => out.push(String(a) + ' '.repeat(Math.max(1, W - String(a).length - String(b).length)) + b);
-  if (t.test) out.push('******** TEST TICKET - NOT VALID ********', '');
-  out.push('BLUE BARN LAND AND CATTLE', '2949 S Road', 'Haviland, KS 67059', 'P: 620-995-4245', '');
-  line(t.status === 'Void' ? 'VOID' : (t.dir === 'OUT' ? 'OUTBOUND' : 'INBOUND'), pad6(t.no));
-  line('BRANCH ROENBAUGH FARMS');
-  line((t.commodity || '').toUpperCase(), 'CROP YEAR ' + (t.cropYear || ''));
-  if (t.dir === 'OUT') { line((t.buyer || '').toUpperCase()); line('CONTRACT', t.contractNo === 'TBD' || !t.contractNo ? 'TO BE ASSIGNED' : String(t.contractNo)); }
-  else line('FIELD ' + (t.field || '').toUpperCase(), 'LOAD # ' + t.loadNo);
+  // Half-sheet (8.5 x 5.5 in, landscape) layout modeled on the old Agtrax ticket.
+  const W = 76, out = [];
+  const lr = (a, b = '') => out.push(String(a) + ' '.repeat(Math.max(1, W - String(a).length - String(b).length)) + b);
+  const ctr = s => out.push(' '.repeat(Math.max(0, Math.floor((W - s.length) / 2))) + s);
+  // weight row: date/time, dotted label, right-aligned value
+  const wrow = (when, label, val) => out.push(' '.repeat(22) + (when || '').padEnd(18) + (label + ' ').padEnd(12, '.') + ' : ' + String(val).padStart(15));
+  const kind = t.status === 'Void' ? 'VOID' : (t.dir === 'OUT' ? 'OUTBOUND' : 'INBOUND');
+  if (t.test) ctr('******** TEST TICKET - NOT VALID ********');
+  ctr('BLUE BARN LAND & CATTLE'); ctr('2949 S Road'); ctr('Haviland, KS 67059'); ctr('P: 620-995-4245');
   out.push('');
+  lr((t.commodity || '').toUpperCase() + '   CROP YEAR ' + (t.cropYear || ''), kind);
+  lr('', pad6(t.no));
+  if (t.dir === 'OUT') {
+    lr((t.buyer || '').toUpperCase());
+    lr('CONTRACT ' + (t.contractNo === 'TBD' || !t.contractNo ? 'TO BE ASSIGNED' : String(t.contractNo)));
+  } else {
+    lr('FIELD ' + (t.field || '').toUpperCase());
+    lr('LOAD # ' + t.loadNo);
+  }
   if (t.status === 'Closed') {
     const grossAt = t.dir === 'OUT' ? t.second.at : t.first.at, tareAt = t.dir === 'OUT' ? t.first.at : t.second.at;
-    line('GROSS  ' + dt(grossAt), fmt0(t.gross) + ' lb');
-    line('TARE   ' + dt(tareAt), fmt0(t.tare) + ' lb');
-    line('NET', fmt0(t.net) + ' lb');
-    line('BUSHELS', fmt2(t.wetBu));
+    out.push('');
+    wrow(dt(grossAt), 'GROSS', fmt0(t.gross) + ' lb');
+    wrow(dt(tareAt), 'TARE', fmt0(t.tare) + ' lb');
+    wrow('', 'NET', fmt0(t.net) + ' lb');
+    wrow('', 'BUSHELS', fmt2(t.wetBu) + '   ');
     if (t.dir === 'IN') {
       const g = t.grade || {};
-      out.push('');
-      line('MOISTURE', g.moisture ?? '-'); line('TEST WEIGHT', g.tw ?? '-');
-      if (g.fm) line('FOREIGN MATERIAL', g.fm);
+      out.push('*' + '-'.repeat(30) + ' GRADES ' + '-'.repeat(W - 40) + '*');
+      out.push('MOISTURE ' + String(g.moisture ?? '-').padEnd(10) + 'TEST WEIGHT ' + String(g.tw ?? '-').padEnd(10) + (g.fm ? 'FM ' + g.fm : ''));
       const sh = sharesFor(t.field, t.cropYear);
-      out.push('');
-      if (sh.length) P.splitNet(t.net, lbPerBu(t.commodity), sh).forEach(s => line(`${s.owner.toUpperCase()} ${s.pct}%`, fmt0(s.netLb) + ' lb'));
+      if (sh.length) P.splitNet(t.net, lbPerBu(t.commodity), sh).forEach(s => lr(`${s.owner.toUpperCase()}   ${s.pct}%`, fmt0(s.netLb) + ' lb   '));
       else out.push('SPLIT: NOT SET FOR THIS FIELD - OFFICE TO FIX');
     }
   }
@@ -357,8 +365,9 @@ function ticketText(t) {
   out.push('TRUCK: ' + (t.truck || '').toUpperCase() + (t.driver ? '   DRIVER: ' + t.driver.toUpperCase() : ''));
   if (t.bol) out.push('BILL OF LADING: ' + t.bol);
   if (t.remarks) out.push('REMARKS: ' + t.remarks);
-  out.push('', '', '___________________    ___________________', 'DRIVER                 WEIGHMASTER ' + (t.operator || '').toUpperCase());
-  if (t.test) out.push('', '******** TEST TICKET - NOT VALID ********');
+  out.push('', '', '_'.repeat(32) + ' '.repeat(W - 64) + '_'.repeat(32));
+  lr('DRIVER', ('WEIGHMASTER ' + (t.operator || '').toUpperCase()).padEnd(32));
+  if (t.test) ctr('******** TEST TICKET - NOT VALID ********');
   return out.join('\n');
 }
 // Prints only the ticket: the page's print stylesheet hides the app and shows #printArea.
