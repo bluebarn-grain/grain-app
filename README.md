@@ -45,6 +45,8 @@ Every night at 7 pm, each buyer that shipped grain gets one email from BBL&C: a 
 
 **Tickets are never missed or sent twice.** Each email covers every outbound ticket not yet emailed, so a truck weighed after 7 pm, or a ticket put on a contract later, goes out the next night. The **EmailLog** tab lists what was sent.
 
+**Contracts that fill.** When a load is more than a contract has left, the contract is filled and the rest rolls to the same buyer's next open contract for the same commodity (earliest shipment start first), even if that contract's shipment period hasn't started. The ticket prints both amounts, and a filled contract drops off the scale's contract list. If every contract for that buyer is full, the extra stays on the chosen contract and the office gets a warning. What went where is on the **TicketContracts** tab (one row per ticket per contract); fix a row there by hand if needed.
+
 ## Scale PC tips
 - Use **Chrome** or **Edge**. Serial ports don't work in Safari or Firefox.
 - Install it as an app: Chrome menu → **Cast, save and share → Install page as app**.
@@ -57,7 +59,8 @@ In the backend, paste the real Sheet ID into `switchToLive()` and run it once. I
 ## Tests
 ```
 node test/unit.test.js          # parsers and backend logic
-node test/emails.test.js        # nightly buyer emails
+node test/emails.test.js        # nightly buyer emails and contract roll-over
+ROLLOVER=1 node test/server.js & node test/e2e-rollover.js   # roll-over in the browser
 node test/server.js &           # fake backend on a mock Sheet
 node test/e2e.js shot.png       # browser run-through on the simulator
 ```

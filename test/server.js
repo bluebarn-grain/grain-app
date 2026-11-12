@@ -1,7 +1,10 @@
 // Serves the app and a fake backend (the real Code.gs running on a mock Sheet) for browser tests.
 const http = require('http'), fs = require('fs'), path = require('path');
 const { loadBackend, testSheet } = require('./mock-gas.js');
-const ss = testSheet(); const be = loadBackend(ss, { SHEET_ID: 'x', API_KEY: 'k' });
+const ss = testSheet();
+// ROLLOVER=1: small TEST-C1 plus a later Andersons contract, to try contract roll-over.
+if (process.env.ROLLOVER) { ss.sheets.Contracts.data[1][4] = 1500; ss.sheets.Contracts.data.push(['TEST-C3', 'The Andersons', 'Corn', 2026, 5000, new Date('2027-02-01'), '', 'Open', '']); }
+const be = loadBackend(ss, { SHEET_ID: 'x', API_KEY: 'k' });
 let down = false;
 const root = path.join(__dirname, '..');
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };

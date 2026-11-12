@@ -102,14 +102,11 @@ function lists_(ss) {
   var commodities = rows_(tab_(ss, 'Commodities')).filter(function (r) { return r.Commodity; });
   var settings = {};
   rows_(tab_(ss, 'Settings')).forEach(function (r) { if (r.Key) settings[r.Key] = r.Value; });
-  var delivered = {};
-  rows_(tab_(ss, 'Tickets')).forEach(function (t) {
-    if (t.Direction === 'OUT' && t.Status === 'Closed' && t.ContractNo) {
-      delivered[t.ContractNo] = (delivered[t.ContractNo] || 0) + Number(t.WetBu || 0);
-    }
-  });
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  var applied;
+  try { applied = allocatePending_(ss).applied; } finally { lock.releaseLock(); }
   var contracts = rows_(tab_(ss, 'Contracts')).filter(function (r) { return r.ContractNo && String(r.Status) !== 'Closed'; })
-    .map(function (r) { r.DeliveredBu = Math.round((delivered[r.ContractNo] || 0) * 100) / 100; return r; });
+    .map(function (r) { r.DeliveredBu = Math.round((applied[String(r.ContractNo)] || 0) * 100) / 100; return r; });
   return { customers: customers, fields: fields, shares: shares, commodities: commodities, settings: settings, contracts: contracts };
 }
 
@@ -179,6 +176,7 @@ function saveTickets_(ss, tickets, station) {
     if (sOut.length) ssh.getRange(ssh.getLastRow() + 1, 1, sOut.length, sc.width).setValues(sOut);
     bumpSetting_(ss, 'NextTicketNo', maxNo + 1);
     if (maxBol) bumpSetting_(ss, 'NextBOLNo', maxBol + 1);
+    warnings = warnings.concat(allocatePending_(ss).warnings);
     return { saved: saved, warnings: warnings };
   } finally {
     lock.releaseLock();
@@ -193,6 +191,90 @@ function bumpSetting_(ss, key, n) {
     if (v[i][0] === key) { if (!(Number(v[i][1]) >= n)) sh.getRange(i + 1, 2).setValue(n); return; }
   }
   sh.appendRow([key, n, 'Kept up to date by the scale app']);
+}
+
+/* ---- contract allocation (keep identical to the copy in parsers.js) ---- */
+// The chosen contract, then the same buyer's other open contracts for the same commodity,
+// earliest shipment start first. Shipment windows don't block a roll-over.
+function contractChain(chosen, contracts) {
+const first = contracts.find(c => String(c.ContractNo) === String(chosen));
+if (!first) return [];
+const start = c => { const d = c.ShipStart ? new Date(c.ShipStart).getTime() : NaN; return isNaN(d) ? Infinity : d; };
+const rest = contracts.filter(c => c !== first && String(c.Status) !== 'Closed' && c.Buyer === first.Buyer && c.Commodity === first.Commodity)
+  .sort((a, b) => (start(a) - start(b)) || String(a.ContractNo).localeCompare(String(b.ContractNo)));
+return [first].concat(rest);
+}
+// Applies a load's bushels: fills the chosen contract, rolls the rest into the next one(s).
+// If every contract is full, the leftover stays on the chosen contract and comes back as "over".
+function applyToContracts(bu, chosen, contracts, applied) {
+const chain = contractChain(chosen, contracts);
+if (!chain.length) return { parts: [], over: 0 };
+let left = Math.round(Number(bu || 0) * 100); const parts = [];
+for (const c of chain) {
+  if (left <= 0) break;
+  const room = Math.round(Number(c.Bushels || 0) * 100) - Math.round(Number(applied[String(c.ContractNo)] || 0) * 100);
+  if (room <= 0) continue;
+  const take = Math.min(left, room);
+  parts.push({ contractNo: String(c.ContractNo), bu: take / 100, rolled: c !== chain[0] });
+  left -= take;
+}
+let over = 0;
+if (left > 0) {
+  over = left / 100;
+  const no = String(chain[0].ContractNo), p = parts.find(x => x.contractNo === no);
+  if (p) p.bu = (Math.round(p.bu * 100) + left) / 100; else parts.unshift({ contractNo: no, bu: left / 100, rolled: false });
+}
+return { parts, over };
+}
+
+var ALLOC_COLUMNS = ['TicketNo', 'ContractNo', 'Bushels', 'RolledOver'];
+
+/**
+ * Applies every closed outbound ticket that has a contract but isn't applied yet, in ticket order.
+ * Results go to the TicketContracts tab (one row per ticket per contract). The office can edit
+ * those rows by hand; a ticket that already has rows is never re-applied.
+ * Caller holds the script lock.
+ */
+function allocatePending_(ss) {
+  var ash = ss.getSheetByName('TicketContracts');
+  if (!ash) { ash = ss.insertSheet('TicketContracts'); }
+  var ac = ensureColumns_(ash, ALLOC_COLUMNS);
+  var applied = {}, done = {};
+  rows_(ash).forEach(function (a) {
+    if (a.TicketNo === '' || a.TicketNo == null) return;
+    done[String(a.TicketNo)] = true;
+    applied[String(a.ContractNo)] = (applied[String(a.ContractNo)] || 0) + Number(a.Bushels || 0);
+  });
+  var contracts = rows_(tab_(ss, 'Contracts')).filter(function (c) { return c.ContractNo; });
+  var known = {}; contracts.forEach(function (c) { known[String(c.ContractNo)] = true; });
+  var pend = rows_(tab_(ss, 'Tickets')).filter(function (t) {
+    var c = String(t.ContractNo || '');
+    return t.Direction === 'OUT' && t.Status === 'Closed' && c && c !== 'TBD' && known[c] && !done[String(t.TicketNo)];
+  }).sort(function (a, b) { return Number(a.TicketNo) - Number(b.TicketNo); });
+  var rowsOut = [], warnings = [];
+  pend.forEach(function (t) {
+    var r = applyToContracts(t.WetBu, t.ContractNo, contracts, applied);
+    r.parts.forEach(function (p) {
+      applied[p.contractNo] = (applied[p.contractNo] || 0) + p.bu;
+      var row = new Array(ac.width).fill('');
+      row[ac.map.TicketNo - 1] = Number(t.TicketNo); row[ac.map.ContractNo - 1] = p.contractNo;
+      row[ac.map.Bushels - 1] = p.bu; row[ac.map.RolledOver - 1] = p.rolled;
+      rowsOut.push(row);
+    });
+    if (r.over > 0) warnings.push('Ticket ' + t.TicketNo + ': ' + t.ContractNo + ' and the buyer\'s other contracts are full. ' + r.over.toFixed(2) + ' bu over-shipped on ' + t.ContractNo + '.');
+  });
+  if (rowsOut.length) ash.getRange(ash.getLastRow() + 1, 1, rowsOut.length, ac.width).setValues(rowsOut);
+  return { applied: applied, warnings: warnings };
+}
+
+/** Ticket number -> [{contractNo, bu, rolled}] from the TicketContracts tab. */
+function allocations_(ss) {
+  var by = {}, sh = ss.getSheetByName('TicketContracts');
+  if (sh) rows_(sh).forEach(function (a) {
+    if (a.TicketNo === '' || a.TicketNo == null) return;
+    (by[String(a.TicketNo)] = by[String(a.TicketNo)] || []).push({ contractNo: String(a.ContractNo), bu: Number(a.Bushels || 0), rolled: isTrue_(a.RolledOver) });
+  });
+  return by;
 }
 
 /* ======================================================================
@@ -290,12 +372,16 @@ function nightlyEmails_(ss, now, preview) {
   var out = rows_(tab_(ss, 'Tickets')).filter(function (t) {
     return t.Direction === 'OUT' && t.Status === 'Closed' && (preview || !isTrue_(t.TestTicket));
   });
-  var toDate = {}, loadsToDate = {};
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try { allocatePending_(ss); } finally { lock.releaseLock(); }
+  var alloc = allocations_(ss);
+  var toDate = {}, loadsToDate = {}, truckBu = {};
   out.forEach(function (t) {
-    var c = String(t.ContractNo || '');
-    if (!c || c === 'TBD') return;
-    toDate[c] = (toDate[c] || 0) + Number(t.WetBu || 0);
-    loadsToDate[c] = (loadsToDate[c] || 0) + 1;
+    (alloc[String(t.TicketNo)] || []).forEach(function (p) {
+      toDate[p.contractNo] = (toDate[p.contractNo] || 0) + p.bu;
+      loadsToDate[p.contractNo] = (loadsToDate[p.contractNo] || 0) + 1;
+      truckBu[p.contractNo] = (truckBu[p.contractNo] || 0) + Number(t.WetBu || 0);
+    });
   });
   // Every closed outbound ticket since cutover that hasn't been emailed yet, so a truck
   // weighed after 7 pm or a ticket assigned to a contract later still goes out next time.
@@ -312,20 +398,23 @@ function nightlyEmails_(ss, now, preview) {
 
   var problems = [], byBuyer = {};
   todays.forEach(function (t) {
-    var c = String(t.ContractNo || '');
-    if (!c || c === 'TBD' || !contracts[c]) { problems.push('Ticket ' + t.TicketNo + ' (' + (t.Buyer || 'no buyer') + ') has no contract, so it was held back. Put it on a contract and it goes out with the next night\'s email.'); return; }
-    var buyer = contracts[c].Buyer || t.Buyer;
-    var to = String(contracts[c].Email || '').trim() || emails[buyer] || '';
-    var key = buyer + '|' + to;
-    (byBuyer[key] = byBuyer[key] || { buyer: buyer, to: to, contracts: {} });
-    (byBuyer[key].contracts[c] = byBuyer[key].contracts[c] || []).push(t);
+    var parts = alloc[String(t.TicketNo)] || [];
+    if (!parts.length) { problems.push('Ticket ' + t.TicketNo + ' (' + (t.Buyer || 'no buyer') + ') has no contract, so it was held back. Put it on a contract and it goes out with the next night\'s email.'); return; }
+    parts.forEach(function (p) {
+      var c = p.contractNo, k = contracts[c] || {};
+      var buyer = k.Buyer || t.Buyer;
+      var to = String(k.Email || '').trim() || emails[buyer] || '';
+      var key = buyer + '|' + to;
+      (byBuyer[key] = byBuyer[key] || { buyer: buyer, to: to, contracts: {} });
+      (byBuyer[key].contracts[c] = byBuyer[key].contracts[c] || []).push({ t: t, bu: p.bu, rolled: p.rolled, split: parts.length > 1, parts: parts });
+    });
   });
 
   var sent = [];
   Object.keys(byBuyer).forEach(function (key) {
     var g = byBuyer[key];
     if (!g.to) { problems.push(g.buyer + ' shipped today but has no email on the Customers tab. Nothing was sent to them.'); return; }
-    var msg = buildEmail_(g, contracts, toDate, loadsToDate, banter, dayNo, now);
+    var msg = buildEmail_(g, contracts, toDate, loadsToDate, truckBu, banter, dayNo, now);
     var to = preview ? office : g.to;
     if (!to) return;
     MailApp.sendEmail({
@@ -344,38 +433,47 @@ function nightlyEmails_(ss, now, preview) {
   return { sent: sent, problems: problems };
 }
 
-function buildEmail_(g, contracts, toDate, loadsToDate, banter, dayNo, now) {
+function buildEmail_(g, contracts, toDate, loadsToDate, truckBu, banter, dayNo, now) {
   var dateStr = Utilities.formatDate(now, TZ, 'EEEE, MMM d');
   var blocks = [], rows = [], loadsToday = 0, completed = [];
   Object.keys(g.contracts).sort().forEach(function (c) {
-    var k = contracts[c], ts = g.contracts[c].sort(function (a, b) { return Number(a.TicketNo) - Number(b.TicketNo); });
-    var buToday = ts.reduce(function (a, t) { return a + Number(t.WetBu || 0); }, 0);
+    var k = contracts[c] || {}, ts = g.contracts[c].sort(function (a, b) { return Number(a.t.TicketNo) - Number(b.t.TicketNo); });
+    var buToday = ts.reduce(function (a, x) { return a + x.bu; }, 0);
     var total = Number(k.Bushels || 0), done = toDate[c] || 0, left = total - done;
-    var avg = loadsToDate[c] ? done / loadsToDate[c] : 0;
-    var lines = ['Contract ' + c + ' — ' + (k.Commodity || ts[0].Commodity || ''),
+    var avg = loadsToDate[c] ? truckBu[c] / loadsToDate[c] : 0;  // average whole truck, not the split piece
+    var lines = ['Contract ' + c + ' — ' + (k.Commodity || ts[0].t.Commodity || ''),
       'Today: ' + ts.length + ' load' + (ts.length === 1 ? '' : 's') + ', ' + n2_(buToday) + ' bu',
-      'Shipped to date: ' + loadsToDate[c] + ' loads, ' + n2_(done) + ' bu of ' + n0_(total) + ' bu'];
+      'Shipped to date: ' + loadsToDate[c] + ' load' + (loadsToDate[c] === 1 ? '' : 's') + ', ' + n2_(done) + ' bu of ' + n0_(total) + ' bu'];
     var complete = total > 0 && left <= 0;
     if (!total) lines.push('Remaining: contract bushels not set');
-    else if (complete) { lines.push(left < 0 ? 'Complete — over by ' + n2_(-left) + ' bu' : 'Complete'); completed.push(c); lines.push(pick_(banter.Complete, dayNo, c)); }
+    else if (complete) { lines.push(left < 0 ? 'Complete — over by ' + n2_(-left) + ' bu' : 'Complete'); completed.push(c); }
     else lines.push('Remaining: ' + n2_(left) + ' bu' + (avg ? ', about ' + Math.ceil(left / avg) + ' more load' + (Math.ceil(left / avg) === 1 ? '' : 's') + ' at the average so far' : ''));
+    ts.forEach(function (x) {
+      if (!x.split) return;
+      var others = x.parts.filter(function (p) { return p.contractNo !== c; });
+      if (x.rolled) lines.push('Ticket ' + x.t.TicketNo + ': ' + n2_(x.bu) + ' bu rolled over from ' + others.map(function (p) { return p.contractNo; }).join(', ') + ' after it filled');
+      else lines.push('Ticket ' + x.t.TicketNo + ': ' + n2_(x.bu) + ' bu here, ' + others.map(function (p) { return n2_(p.bu) + ' bu rolled to ' + p.contractNo; }).join(', '));
+    });
+    if (complete) lines.push(pick_(banter.Complete, dayNo, c));
     blocks.push(lines);
     loadsToday += ts.length;
-    ts.forEach(function (t) {
-      rows.push([t.TicketNo, Utilities.formatDate(new Date(t.DateTime), TZ, 'MM/dd/yyyy HH:mm'), c, t.Commodity, t.Truck, t.BOLNo, t.GrossLb, t.TareLb, t.NetLb, Number(t.WetBu || 0).toFixed(2)]);
+    ts.forEach(function (x) {
+      var t = x.t;
+      rows.push([t.TicketNo, Utilities.formatDate(new Date(t.DateTime), TZ, 'MM/dd/yyyy HH:mm'), c, t.Commodity, t.Truck, t.BOLNo, t.GrossLb, t.TareLb, t.NetLb, Number(t.WetBu || 0).toFixed(2), x.bu.toFixed(2)]);
     });
   });
 
+  var trucks = {}; Object.keys(g.contracts).forEach(function (c) { g.contracts[c].forEach(function (x) { trucks[x.t.TicketNo] = 1; }); }); loadsToday = Object.keys(trucks).length;
   var subject = 'BBL&C shipped ' + loadsToday + ' load' + (loadsToday === 1 ? '' : 's') + ' today — ' +
-    (blocks.length === 1 ? 'Contract ' + Object.keys(g.contracts)[0] + ', ' + (contracts[Object.keys(g.contracts)[0]].Commodity || '') : blocks.length + ' contracts') +
-    (completed.length ? ' (complete!)' : '');
+    (blocks.length === 1 ? 'Contract ' + Object.keys(g.contracts)[0] + ', ' + ((contracts[Object.keys(g.contracts)[0]] || {}).Commodity || '') : blocks.length + ' contracts') +
+    (completed.length ? ' (' + (blocks.length > 1 ? completed.join(', ') + ' ' : '') + 'complete!)' : '');
   var opener = pick_(banter.Opener, dayNo, g.buyer), pay = pick_(banter.Payment, dayNo, g.buyer + 'p'), signoff = completed.length === blocks.length ? 'Thanks for the business,' : pick_(banter.SignOff, dayNo, g.buyer + 's');
   var greet = 'Hey ' + String(g.buyer).replace(/^the\s+/i, '') + ' crew,';
   var middle = 'The ticket list (' + dateStr + ') is attached for your diligent and professional staff to review. All weights are from the Blue Barn scale.';
 
   var text = [greet, '', opener, ''].concat(blocks.map(function (b) { return b.join('\n'); }).join('\n\n'), '', middle, '', pay, '', signoff, '', SIGNATURE.join('\n')).join('\n');
 
-  var head = ['Ticket', 'Date/Time', 'Contract', 'Commodity', 'Truck', 'BOL', 'Gross lb', 'Tare lb', 'Net lb', 'Bushels'];
+  var head = ['Ticket', 'Date/Time', 'Contract', 'Commodity', 'Truck', 'BOL', 'Gross lb', 'Tare lb', 'Net lb', 'Load bu', 'Applied bu'];
   var td = 'style="padding:4px 8px;border-bottom:1px solid #ddd;text-align:right"';
   var table = '<table style="border-collapse:collapse;font-size:13px"><tr>' + head.map(function (h) { return '<th ' + td.replace('1px solid #ddd', '2px solid #333') + '>' + h + '</th>'; }).join('') + '</tr>' +
     rows.map(function (r) { return '<tr>' + r.map(function (v, i) { return '<td ' + td + '>' + esc_(i >= 6 && i <= 8 ? n0_(v) : v) + '</td>'; }).join('') + '</tr>'; }).join('') + '</table>';
@@ -385,5 +483,5 @@ function buildEmail_(g, contracts, toDate, loadsToDate, banter, dayNo, now) {
     '<p>' + esc_(middle) + '</p>' + table + '<p>' + esc_(pay) + '</p><p>' + esc_(signoff) + '</p><p>' + SIGNATURE.map(esc_).join('<br>') + '</p></div>';
 
   var csv = [head].concat(rows).map(function (r) { return r.map(function (v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(','); }).join('\n');
-  return { subject: subject, text: text, html: html, csv: csv, ticketNos: rows.map(function (r) { return r[0]; }) };
+  return { subject: subject, text: text, html: html, csv: csv, ticketNos: rows.map(function (r) { return r[0]; }).filter(function (v, i, a) { return a.indexOf(v) === i; }) };
 }

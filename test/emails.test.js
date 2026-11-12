@@ -64,4 +64,51 @@ ok('banter tab created and lines rotate day to day', () => {
   const b = be.ctx.banter_(ss); const a = be.ctx.pick_(b.Opener, 100, 'x'), c = be.ctx.pick_(b.Opener, 101, 'x');
   assert.notEqual(a, c);
 });
+
+// ---------- contract roll-over ----------
+const P = require('../parsers.js');
+ok('roll-over: fills chosen contract, rest goes to same buyer\'s next contract regardless of ship window', () => {
+  const cs = [
+    { ContractNo: 'A', Buyer: 'X', Commodity: 'Corn', Bushels: 1000, ShipStart: new Date('2026-11-01') },
+    { ContractNo: 'C', Buyer: 'X', Commodity: 'Corn', Bushels: 1000, ShipStart: new Date('2027-03-01') },
+    { ContractNo: 'B', Buyer: 'X', Commodity: 'Corn', Bushels: 1000, ShipStart: new Date('2026-12-01') },
+    { ContractNo: 'S', Buyer: 'X', Commodity: 'Sorghum', Bushels: 1000 },
+    { ContractNo: 'Y', Buyer: 'Other', Commodity: 'Corn', Bushels: 1000 }];
+  const r = P.applyToContracts(901.07, 'A', cs, { A: 450 });
+  assert.deepEqual(r.parts, [{ contractNo: 'A', bu: 550, rolled: false }, { contractNo: 'B', bu: 351.07, rolled: true }]);
+  assert.equal(r.over, 0);
+  const full = P.applyToContracts(500, 'A', cs, { A: 1000, B: 1000, C: 900 });
+  assert.deepEqual(full.parts, [{ contractNo: 'A', bu: 400, rolled: false }, { contractNo: 'C', bu: 100, rolled: true }]);
+  assert.equal(full.over, 400);
+});
+ok('roll-over: backend copy matches the app copy', () => {
+  const ss2 = testSheet(); const be2 = loadBackend(ss2, { SHEET_ID: 'x', API_KEY: 'k' });
+  for (let i = 0; i < 300; i++) {
+    const cs = [1, 2, 3].map(k => ({ ContractNo: 'K' + k, Buyer: 'X', Commodity: 'Corn', Bushels: Math.round(Math.random() * 2000), ShipStart: Math.random() < .3 ? '' : new Date(2026, 10, Math.ceil(Math.random() * 28)), Status: Math.random() < .1 ? 'Closed' : 'Open' }));
+    const applied = { K1: Math.random() * 2000, K2: Math.random() * 500 };
+    const bu = Math.round(Math.random() * 120000) / 100;
+    assert.deepEqual(JSON.parse(JSON.stringify(be2.ctx.applyToContracts(bu, 'K1', cs, applied))), P.applyToContracts(bu, 'K1', cs, applied));
+  }
+});
+ok('roll-over end to end: split ticket, filled contract drops from scale list, email shows both', () => {
+  const ss3 = testSheet(), T = ss3.sheets;
+  T.Customers.data[2][5] = 'buyer@andersons.example';
+  T.Contracts.data[1][4] = 1500;  // TEST-C1 1,500 bu
+  T.Contracts.data.push(['TEST-C3', 'The Andersons', 'Corn', 2026, 5000, new Date('2027-02-01'), '', 'Open', '']);
+  const b3 = loadBackend(ss3, { SHEET_ID: 'x', API_KEY: 'k' });
+  const j = b3.call({ action: 'saveTickets', key: 'k', tickets: [out(900001, '2026-11-11T15:00:00Z', 1000), out(900002, '2026-11-11T16:00:00Z', 901.07)] });
+  assert.equal(j.warnings.length, 0);
+  const rows = T.TicketContracts.data.slice(1).map(r => r.slice(0, 4));
+  assert.deepEqual(rows, [[900001, 'TEST-C1', 1000, false], [900002, 'TEST-C1', 500, false], [900002, 'TEST-C3', 401.07, true]]);
+  const l = b3.call({ action: 'lists', key: 'k' });
+  const c1 = l.contracts.find(c => c.ContractNo === 'TEST-C1'), c3 = l.contracts.find(c => c.ContractNo === 'TEST-C3');
+  assert.equal(c1.DeliveredBu, 1500); assert.equal(c3.DeliveredBu, 401.07);
+  b3.ctx.nightlyEmails_(ss3, new Date('2026-11-12T01:00:00Z'), false);
+  const m = b3.sent[0];
+  assert.match(m.subject, /shipped 2 loads today — 2 contracts \(TEST-C1 complete!\)/);
+  assert.match(m.body, /Ticket 900002: 500.00 bu here, 401.07 bu rolled to TEST-C3/);
+  assert.match(m.body, /Ticket 900002: 401.07 bu rolled over from TEST-C1 after it filled/);
+  assert.equal(m.attachments[0].data.split('\n').length, 4);
+  console.log('\n' + m.subject + '\n\n' + m.body + '\n');
+});
 console.log(`\n${n} passed`);
