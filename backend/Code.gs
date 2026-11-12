@@ -12,7 +12,7 @@ var TEST_SHEET_ID = '1PcNarJVBoylGRON6OAX6w4IH8yqJk_0Db-KZo5j8T-k';
 var TICKET_COLUMNS = ['TicketNo', 'DateTime', 'Direction', 'Commodity', 'CropYear', 'Field', 'ContractNo', 'Destination',
   'Truck', 'Driver', 'Operator', 'GrossLb', 'TareLb', 'NetLb', 'ManualWeight', 'MoisturePct', 'TestWeight', 'GrainTempF',
   'FMPct', 'WeighBillNo', 'DestNetLb', 'DestMoisturePct', 'DestTestWeight', 'Status', 'Remarks', 'CreatedAt',
-  'BOLNo', 'Buyer', 'LoadNo', 'TimeIn', 'TimeOut', 'WetBu', 'GradeSource', 'Station', 'TestTicket', 'SyncedAt'];
+  'BOLNo', 'Buyer', 'LoadNo', 'TimeIn', 'TimeOut', 'WetBu', 'GradeSource', 'Station', 'TestTicket', 'SyncedAt', 'RolledFrom'];
 var SPLIT_COLUMNS = ['TicketNo', 'Owner', 'SharePct', 'NetLb', 'WetBu'];
 
 /** Run once from the editor: points the backend at the TEST Sheet and makes a key. */
@@ -150,7 +150,7 @@ function saveTickets_(ss, tickets, station) {
       set('MoisturePct', t.moisture); set('TestWeight', t.tw); set('GrainTempF', t.temp); set('FMPct', t.fm); set('GradeSource', t.gradeSource);
       set('Status', t.status); set('Remarks', t.remarks); set('CreatedAt', t.timeIn ? new Date(t.timeIn) : now);
       set('BOLNo', t.bol); set('LoadNo', t.loadNo); set('TimeIn', t.timeIn ? new Date(t.timeIn) : '');
-      set('TimeOut', t.timeOut ? new Date(t.timeOut) : ''); set('Station', t.station || station); set('TestTicket', !!t.test); set('SyncedAt', now);
+      set('TimeOut', t.timeOut ? new Date(t.timeOut) : ''); set('Station', t.station || station); set('TestTicket', !!t.test); set('SyncedAt', now); set('RolledFrom', t.rolledFrom);
       tOut.push(row);
 
       if (t.dir === 'IN' && t.status === 'Closed') {
@@ -204,27 +204,17 @@ const rest = contracts.filter(c => c !== first && String(c.Status) !== 'Closed' 
   .sort((a, b) => (start(a) - start(b)) || String(a.ContractNo).localeCompare(String(b.ContractNo)));
 return [first].concat(rest);
 }
-// Applies a load's bushels: fills the chosen contract, rolls the rest into the next one(s).
-// If every contract is full, the leftover stays on the chosen contract and comes back as "over".
+// Whole loads only. The load goes on the first contract in the chain that has at least half
+// the load left (a ~1,000 bu truck: 500+ left stays, 499 rolls to the next contract).
+// If none does, it stays on the chosen contract and the excess comes back as "over".
 function applyToContracts(bu, chosen, contracts, applied) {
-const chain = contractChain(chosen, contracts);
-if (!chain.length) return { parts: [], over: 0 };
-let left = Math.round(Number(bu || 0) * 100); const parts = [];
-for (const c of chain) {
-  if (left <= 0) break;
-  const room = Math.round(Number(c.Bushels || 0) * 100) - Math.round(Number(applied[String(c.ContractNo)] || 0) * 100);
-  if (room <= 0) continue;
-  const take = Math.min(left, room);
-  parts.push({ contractNo: String(c.ContractNo), bu: take / 100, rolled: c !== chain[0] });
-  left -= take;
-}
-let over = 0;
-if (left > 0) {
-  over = left / 100;
-  const no = String(chain[0].ContractNo), p = parts.find(x => x.contractNo === no);
-  if (p) p.bu = (Math.round(p.bu * 100) + left) / 100; else parts.unshift({ contractNo: no, bu: left / 100, rolled: false });
-}
-return { parts, over };
+  const chain = contractChain(chosen, contracts);
+  if (!chain.length) return { parts: [], over: 0 };
+  const load = Math.round(Number(bu || 0) * 100);
+  const room = c => Math.round(Number(c.Bushels || 0) * 100) - Math.round(Number(applied[String(c.ContractNo)] || 0) * 100);
+  let target = chain.find(c => room(c) * 2 >= load), over = 0;
+  if (!target) { target = chain[0]; over = (load - Math.max(0, room(target))) / 100; }
+  return { parts: [{ contractNo: String(target.ContractNo), bu: load / 100, rolled: target !== chain[0] }], over };
 }
 
 var ALLOC_COLUMNS = ['TicketNo', 'ContractNo', 'Bushels', 'RolledOver'];
@@ -258,10 +248,10 @@ function allocatePending_(ss) {
       applied[p.contractNo] = (applied[p.contractNo] || 0) + p.bu;
       var row = new Array(ac.width).fill('');
       row[ac.map.TicketNo - 1] = Number(t.TicketNo); row[ac.map.ContractNo - 1] = p.contractNo;
-      row[ac.map.Bushels - 1] = p.bu; row[ac.map.RolledOver - 1] = p.rolled;
+      row[ac.map.Bushels - 1] = p.bu; row[ac.map.RolledOver - 1] = p.rolled || !!t.RolledFrom;
       rowsOut.push(row);
     });
-    if (r.over > 0) warnings.push('Ticket ' + t.TicketNo + ': ' + t.ContractNo + ' and the buyer\'s other contracts are full. ' + r.over.toFixed(2) + ' bu over-shipped on ' + t.ContractNo + '.');
+    if (r.over > 0) warnings.push('Ticket ' + t.TicketNo + ': ' + t.ContractNo + ' and the buyer\'s other contracts are full. ' + r.over.toFixed(2) + ' bu over on ' + t.ContractNo + '.');
   });
   if (rowsOut.length) ash.getRange(ash.getLastRow() + 1, 1, rowsOut.length, ac.width).setValues(rowsOut);
   return { applied: applied, warnings: warnings };
@@ -368,6 +358,7 @@ function nightlyEmails_(ss, now, preview) {
   var emails = {}; rows_(tab_(ss, 'Customers')).forEach(function (c) { if (c.Customer) emails[c.Customer] = String(c.Email || '').trim(); });
   var contracts = {}; rows_(tab_(ss, 'Contracts')).forEach(function (c) { if (c.ContractNo) contracts[String(c.ContractNo)] = c; });
   var banter = banter_(ss);
+  var halfLoad = (Number(settings.TypicalLoadBu) || 1000) / 2;
 
   var out = rows_(tab_(ss, 'Tickets')).filter(function (t) {
     return t.Direction === 'OUT' && t.Status === 'Closed' && (preview || !isTrue_(t.TestTicket));
@@ -406,7 +397,7 @@ function nightlyEmails_(ss, now, preview) {
       var to = String(k.Email || '').trim() || emails[buyer] || '';
       var key = buyer + '|' + to;
       (byBuyer[key] = byBuyer[key] || { buyer: buyer, to: to, contracts: {} });
-      (byBuyer[key].contracts[c] = byBuyer[key].contracts[c] || []).push({ t: t, bu: p.bu, rolled: p.rolled, split: parts.length > 1, parts: parts });
+      (byBuyer[key].contracts[c] = byBuyer[key].contracts[c] || []).push({ t: t, bu: p.bu, rolledFrom: t.RolledFrom || (p.rolled ? String(t.ContractNo) : '') });
     });
   });
 
@@ -414,7 +405,7 @@ function nightlyEmails_(ss, now, preview) {
   Object.keys(byBuyer).forEach(function (key) {
     var g = byBuyer[key];
     if (!g.to) { problems.push(g.buyer + ' shipped today but has no email on the Customers tab. Nothing was sent to them.'); return; }
-    var msg = buildEmail_(g, contracts, toDate, loadsToDate, truckBu, banter, dayNo, now);
+    var msg = buildEmail_(g, contracts, toDate, loadsToDate, truckBu, banter, dayNo, now, halfLoad);
     var to = preview ? office : g.to;
     if (!to) return;
     MailApp.sendEmail({
@@ -433,7 +424,7 @@ function nightlyEmails_(ss, now, preview) {
   return { sent: sent, problems: problems };
 }
 
-function buildEmail_(g, contracts, toDate, loadsToDate, truckBu, banter, dayNo, now) {
+function buildEmail_(g, contracts, toDate, loadsToDate, truckBu, banter, dayNo, now, halfLoad) {
   var dateStr = Utilities.formatDate(now, TZ, 'EEEE, MMM d');
   var blocks = [], rows = [], loadsToday = 0, completed = [];
   Object.keys(g.contracts).sort().forEach(function (c) {
@@ -444,22 +435,19 @@ function buildEmail_(g, contracts, toDate, loadsToDate, truckBu, banter, dayNo, 
     var lines = ['Contract ' + c + ' — ' + (k.Commodity || ts[0].t.Commodity || ''),
       'Today: ' + ts.length + ' load' + (ts.length === 1 ? '' : 's') + ', ' + n2_(buToday) + ' bu',
       'Shipped to date: ' + loadsToDate[c] + ' load' + (loadsToDate[c] === 1 ? '' : 's') + ', ' + n2_(done) + ' bu of ' + n0_(total) + ' bu'];
-    var complete = total > 0 && left <= 0;
+    var complete = total > 0 && left < halfLoad;  // less than half a load left: no more trucks go on it
     if (!total) lines.push('Remaining: contract bushels not set');
-    else if (complete) { lines.push(left < 0 ? 'Complete — over by ' + n2_(-left) + ' bu' : 'Complete'); completed.push(c); }
+    else if (complete) { lines.push(left < 0 ? 'Complete — over by ' + n2_(-left) + ' bu' : left > 0 ? 'Complete — ' + n2_(left) + ' bu short' : 'Complete'); completed.push(c); }
     else lines.push('Remaining: ' + n2_(left) + ' bu' + (avg ? ', about ' + Math.ceil(left / avg) + ' more load' + (Math.ceil(left / avg) === 1 ? '' : 's') + ' at the average so far' : ''));
     ts.forEach(function (x) {
-      if (!x.split) return;
-      var others = x.parts.filter(function (p) { return p.contractNo !== c; });
-      if (x.rolled) lines.push('Ticket ' + x.t.TicketNo + ': ' + n2_(x.bu) + ' bu rolled over from ' + others.map(function (p) { return p.contractNo; }).join(', ') + ' after it filled');
-      else lines.push('Ticket ' + x.t.TicketNo + ': ' + n2_(x.bu) + ' bu here, ' + others.map(function (p) { return n2_(p.bu) + ' bu rolled to ' + p.contractNo; }).join(', '));
+      if (x.rolledFrom) lines.push('Ticket ' + x.t.TicketNo + ' went on this contract because ' + x.rolledFrom + ' filled');
     });
     if (complete) lines.push(pick_(banter.Complete, dayNo, c));
     blocks.push(lines);
     loadsToday += ts.length;
     ts.forEach(function (x) {
       var t = x.t;
-      rows.push([t.TicketNo, Utilities.formatDate(new Date(t.DateTime), TZ, 'MM/dd/yyyy HH:mm'), c, t.Commodity, t.Truck, t.BOLNo, t.GrossLb, t.TareLb, t.NetLb, Number(t.WetBu || 0).toFixed(2), x.bu.toFixed(2)]);
+      rows.push([t.TicketNo, Utilities.formatDate(new Date(t.DateTime), TZ, 'MM/dd/yyyy HH:mm'), c, t.Commodity, t.Truck, t.BOLNo, t.GrossLb, t.TareLb, t.NetLb, x.bu.toFixed(2)]);
     });
   });
 
@@ -473,7 +461,7 @@ function buildEmail_(g, contracts, toDate, loadsToDate, truckBu, banter, dayNo, 
 
   var text = [greet, '', opener, ''].concat(blocks.map(function (b) { return b.join('\n'); }).join('\n\n'), '', middle, '', pay, '', signoff, '', SIGNATURE.join('\n')).join('\n');
 
-  var head = ['Ticket', 'Date/Time', 'Contract', 'Commodity', 'Truck', 'BOL', 'Gross lb', 'Tare lb', 'Net lb', 'Load bu', 'Applied bu'];
+  var head = ['Ticket', 'Date/Time', 'Contract', 'Commodity', 'Truck', 'BOL', 'Gross lb', 'Tare lb', 'Net lb', 'Bushels'];
   var td = 'style="padding:4px 8px;border-bottom:1px solid #ddd;text-align:right"';
   var table = '<table style="border-collapse:collapse;font-size:13px"><tr>' + head.map(function (h) { return '<th ' + td.replace('1px solid #ddd', '2px solid #333') + '>' + h + '</th>'; }).join('') + '</tr>' +
     rows.map(function (r) { return '<tr>' + r.map(function (v, i) { return '<td ' + td + '>' + esc_(i >= 6 && i <= 8 ? n0_(v) : v) + '</td>'; }).join('') + '</tr>'; }).join('') + '</table>';

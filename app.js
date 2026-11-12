@@ -73,6 +73,8 @@ const selTicket = () => S.tickets.find(t => t.no === S.sel && t.status === 'Open
 const pending = () => S.tickets.filter(t => !t.synced && t.status !== 'Open');
 // Bushels applied per contract: the backend's totals plus this station's unsynced loads,
 // rolled over the same way the backend will do it.
+// A contract with less than half a typical load left is filled: the next truck goes on the next contract.
+const halfLoad = () => (Number(L().settings && L().settings.TypicalLoadBu) || 1000) / 2;
 function appliedNow() {
   const cs = L().contracts, applied = {};
   cs.forEach(c => { applied[String(c.ContractNo)] = Number(c.DeliveredBu || 0); });
@@ -85,8 +87,8 @@ function contractInfo(no, applied = appliedNow()) {
   const c = L().contracts.find(x => String(x.ContractNo) === String(no)); if (!c) return null;
   const delivered = applied[String(c.ContractNo)] || 0;
   const remaining = Number(c.Bushels || 0) - delivered;
-  const next = P.contractChain(no, L().contracts).slice(1).find(x => Number(x.Bushels || 0) - (applied[String(x.ContractNo)] || 0) > 0);
-  return { ...c, delivered, remaining, filled: Number(c.Bushels || 0) > 0 && remaining <= 0, next: next ? String(next.ContractNo) : '' };
+  const next = P.contractChain(no, L().contracts).slice(1).find(x => Number(x.Bushels || 0) - (applied[String(x.ContractNo)] || 0) >= halfLoad());
+  return { ...c, delivered, remaining, filled: Number(c.Bushels || 0) > 0 && remaining < halfLoad(), next: next ? String(next.ContractNo) : '' };
 }
 
 // ---------------- serial ports ----------------
@@ -319,7 +321,11 @@ async function weighOut() {
   if (t.dir === 'OUT') { t.tare = t.first.lb; t.gross = w; } else { t.gross = t.first.lb; t.tare = w; }
   t.net = t.gross - t.tare;
   t.wetBu = Math.round(t.net / lbPerBu(t.commodity) * 100) / 100;
-  if (t.dir === 'OUT' && t.contractNo && t.contractNo !== 'TBD') t.applied = P.applyToContracts(t.wetBu, t.contractNo, L().contracts, appliedNow()).parts;
+  if (t.dir === 'OUT' && t.contractNo && t.contractNo !== 'TBD') {
+    // Whole load goes on one contract; if the chosen one has less than half this load left, it rolls to the next.
+    const r = P.applyToContracts(t.wetBu, t.contractNo, L().contracts, appliedNow());
+    if (r.parts.length && r.parts[0].contractNo !== String(t.contractNo)) { t.rolledFrom = String(t.contractNo); t.contractNo = r.parts[0].contractNo; }
+  }
   t.status = 'Closed'; t.closedAt = now; delete t._noGradeOk;
   await DB.put('tickets', t);
   S.sel = null;
@@ -354,7 +360,7 @@ function ticketText(t) {
   lr('', pad6(t.no));
   if (t.dir === 'OUT') {
     lr((t.buyer || '').toUpperCase());
-    lr('CONTRACT ' + (t.contractNo === 'TBD' || !t.contractNo ? 'TO BE ASSIGNED' : String(t.contractNo)));
+    lr('CONTRACT ' + (t.contractNo === 'TBD' || !t.contractNo ? 'TO BE ASSIGNED' : String(t.contractNo)), t.rolledFrom ? `(${t.rolledFrom} FILLED)` : '');
   } else {
     lr('FIELD ' + (t.field || '').toUpperCase());
     lr('LOAD # ' + t.loadNo);
@@ -366,10 +372,6 @@ function ticketText(t) {
     wrow(dt(tareAt), 'TARE', fmt0(t.tare) + ' lb');
     wrow('', 'NET', fmt0(t.net) + ' lb');
     wrow('', 'BUSHELS', fmt2(t.wetBu) + '   ');
-    if (t.applied && t.applied.length > 1) {
-      out.push('');
-      t.applied.forEach((p, i) => lr(' '.repeat(40) + (i ? ' '.repeat(11) : 'APPLIED TO ') + p.contractNo + (p.rolled ? ' (ROLLED)' : ''), fmt2(p.bu) + ' bu'));
-    }
     if (t.dir === 'IN') {
       const g = t.grade || {};
       out.push('*' + '-'.repeat(30) + ' GRADES ' + '-'.repeat(W - 40) + '*');
@@ -413,7 +415,7 @@ const wire = t => ({
   gross: t.gross ?? null, tare: t.tare ?? null, net: t.net ?? null, wetBu: t.wetBu ?? null,
   timeIn: t.first && t.first.at, timeOut: t.second ? t.second.at : null, closedAt: t.closedAt,
   moisture: t.grade?.moisture ?? null, tw: t.grade?.tw ?? null, temp: t.grade?.temp ?? null, fm: t.grade?.fm ?? null, gradeSource: t.grade?.source ?? null,
-  readings: (t.readings || []).length, station: t.station, test: t.test
+  readings: (t.readings || []).length, station: t.station, test: t.test, rolledFrom: t.rolledFrom || ''
 });
 async function refreshLists() {
   const j = await api({ action: 'lists' });
@@ -532,7 +534,7 @@ function renderDetailInfo() {
   $('loadNo').textContent = t && t.loadNo ? '# ' + t.loadNo : 'Assigned at weigh in';
   $('void').hidden = !t;
   const ci = contractInfo($('contract').value);
-  $('cinfo').textContent = $('contract').value === 'TBD' ? 'Office assigns the contract later.' : ci ? `${fmt0(ci.delivered)} of ${fmt0(ci.Bushels)} bu delivered · ${ci.filled ? 'FILLED' : fmt0(ci.remaining) + ' left'}${ci.next ? ` · overflow rolls to ${ci.next}` : ' · no other open contract for this buyer'}${S.net !== 'online' ? ' (as of last sync)' : ''}` : '';
+  $('cinfo').textContent = $('contract').value === 'TBD' ? 'Office assigns the contract later.' : ci ? `${fmt0(ci.delivered)} of ${fmt0(ci.Bushels)} bu delivered · ${ci.filled ? 'FILLED' : fmt0(ci.remaining) + ' left'}${ci.next ? ` · next contract ${ci.next}` : ' · no other open contract for this buyer'}${S.net !== 'online' ? ' (as of last sync)' : ''}` : '';
   const sh = sharesFor($('field').value, $('cy').value);
   $('shareInfo').textContent = !$('field').value ? '' : sh.length ? sh.map(s => `${s.owner} ${s.pct}%`).join(' · ') : 'No split set for this field and crop year. Office must fix it.';
   const rd = t && t.readings && t.readings.length ? t.readings : [];

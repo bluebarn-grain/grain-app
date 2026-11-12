@@ -10,9 +10,11 @@ const BASE = 'http://localhost:8123/';
   await page.goto(BASE); await page.waitForSelector('#settings[open]');
   await page.fill('#sUrl', BASE + 'api'); await page.fill('#sKey', 'k'); await page.check('#sSim'); await page.fill('#sOp', 'JCR');
   await page.click('#sCheck'); await page.waitForFunction(() => /Connected/.test(document.getElementById('setMsg').textContent)); await page.click('#sSave');
-  for (const truck of ['T1', 'T2']) {
+  for (const truck of ['T1', 'T2']) {  // simulator loads are ~1,000 bu; TEST-C1 is 1,400
     await page.click('#sOff'); await page.waitForTimeout(400); await page.click('#sEmpty'); await stable();
-    await page.selectOption('#buyer', 'The Andersons'); await page.selectOption('#contract', 'TEST-C1'); await page.fill('#truck', truck);
+    await page.selectOption('#buyer', 'The Andersons');
+    console.log(truck, 'contracts offered:', await opts());
+    await page.selectOption('#contract', (await opts())[0]); await page.fill('#truck', truck);
     console.log(truck, 'contract info:', await page.$eval('#cinfo', e => e.textContent));
     await page.click('#wIn'); await page.click('#newT');
     await page.click('.yrow >> text=' + truck); await page.click('#sLoad'); await stable();

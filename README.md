@@ -45,7 +45,7 @@ Every night at 7 pm, each buyer that shipped grain gets one email from BBL&C: a 
 
 **Tickets are never missed or sent twice.** Each email covers every outbound ticket not yet emailed, so a truck weighed after 7 pm, or a ticket put on a contract later, goes out the next night. The **EmailLog** tab lists what was sent.
 
-**Contracts that fill.** When a load is more than a contract has left, the contract is filled and the rest rolls to the same buyer's next open contract for the same commodity (earliest shipment start first), even if that contract's shipment period hasn't started. The ticket prints both amounts, and a filled contract drops off the scale's contract list. If every contract for that buyer is full, the extra stays on the chosen contract and the office gets a warning. What went where is on the **TicketContracts** tab (one row per ticket per contract); fix a row there by hand if needed.
+**Contracts that fill.** Loads are never split. At weigh-out, if the contract has at least half this load left it takes the whole load (a little over is fine); if it has less, the whole load goes on the same buyer's next open contract for the same commodity (earliest shipment start first), even if that contract's shipment period hasn't started. The ticket prints the contract it went on and "(TEST-C1 FILLED)". A contract with less than half a typical load left drops off the scale's list; set **TypicalLoadBu** in Settings (default 1000). If the buyer has no other open contract, the load stays on the chosen contract and the office gets a warning. The **TicketContracts** tab shows which contract each ticket went on; fix a row there by hand if needed.
 
 ## Scale PC tips
 - Use **Chrome** or **Edge**. Serial ports don't work in Safari or Firefox.

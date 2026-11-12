@@ -96,27 +96,17 @@
       .sort((a, b) => (start(a) - start(b)) || String(a.ContractNo).localeCompare(String(b.ContractNo)));
     return [first].concat(rest);
   }
-  // Applies a load's bushels: fills the chosen contract, rolls the rest into the next one(s).
-  // If every contract is full, the leftover stays on the chosen contract and comes back as "over".
+  // Whole loads only. The load goes on the first contract in the chain that has at least half
+  // the load left (a ~1,000 bu truck: 500+ left stays, 499 rolls to the next contract).
+  // If none does, it stays on the chosen contract and the excess comes back as "over".
   function applyToContracts(bu, chosen, contracts, applied) {
     const chain = contractChain(chosen, contracts);
     if (!chain.length) return { parts: [], over: 0 };
-    let left = Math.round(Number(bu || 0) * 100); const parts = [];
-    for (const c of chain) {
-      if (left <= 0) break;
-      const room = Math.round(Number(c.Bushels || 0) * 100) - Math.round(Number(applied[String(c.ContractNo)] || 0) * 100);
-      if (room <= 0) continue;
-      const take = Math.min(left, room);
-      parts.push({ contractNo: String(c.ContractNo), bu: take / 100, rolled: c !== chain[0] });
-      left -= take;
-    }
-    let over = 0;
-    if (left > 0) {
-      over = left / 100;
-      const no = String(chain[0].ContractNo), p = parts.find(x => x.contractNo === no);
-      if (p) p.bu = (Math.round(p.bu * 100) + left) / 100; else parts.unshift({ contractNo: no, bu: left / 100, rolled: false });
-    }
-    return { parts, over };
+    const load = Math.round(Number(bu || 0) * 100);
+    const room = c => Math.round(Number(c.Bushels || 0) * 100) - Math.round(Number(applied[String(c.ContractNo)] || 0) * 100);
+    let target = chain.find(c => room(c) * 2 >= load), over = 0;
+    if (!target) { target = chain[0]; over = (load - Math.max(0, room(target))) / 100; }
+    return { parts: [{ contractNo: String(target.ContractNo), bu: load / 100, rolled: target !== chain[0] }], over };
   }
 
   const api = { parseScale, parseMoisture, lineSplitter, nextLoadNo, splitNet, contractChain, applyToContracts };
