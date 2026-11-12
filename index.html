@@ -12,7 +12,10 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>Blue Barn Grain · Scale</h1>
+    <div class="brand">
+      <h1>Blue Barn Grain</h1>
+      <div class="seg nav" role="tablist"><button type="button" id="navScale" aria-pressed="true">Scale</button><button type="button" id="navOffice" aria-pressed="false">Office</button></div>
+    </div>
     <div class="meta">
       <span class="pill test" id="pTest" hidden>TEST MODE</span>
       <span class="pill" id="pNet">Starting…</span>
@@ -25,6 +28,7 @@
 
   <div class="banner" id="banner" hidden></div>
 
+  <div id="scaleView">
   <div class="grid">
     <section class="card" aria-label="Scale">
       <div class="lcd">
@@ -129,7 +133,72 @@
     <summary>Diagnostics</summary>
     <div id="diagBody" class="diagbody"></div>
   </details>
+  </div>
+
+  <div id="officeView" hidden>
+    <div class="obar">
+      <div class="tabs" role="tablist">
+        <button type="button" data-tab="contracts" aria-pressed="true">Contracts</button>
+        <button type="button" data-tab="fields" aria-pressed="false">Fields</button>
+        <button type="button" data-tab="inventory" aria-pressed="false">Inventory</button>
+        <button type="button" data-tab="writeoffs" aria-pressed="false">Write-offs</button>
+        <button type="button" data-tab="adjustments" aria-pressed="false">Adjustments</button>
+      </div>
+      <div class="ofilters">
+        <label for="oYear" class="sr">Crop year</label><select id="oYear"></select>
+        <button class="ghost" type="button" id="oPrint">Print</button>
+        <button class="ghost" type="button" id="oRefresh">Refresh</button>
+      </div>
+    </div>
+    <div class="hint" id="oStatus"></div>
+    <section class="card" id="oBody"></section>
+  </div>
 </div>
+
+<dialog id="contractDlg">
+  <form method="dialog" id="contractForm">
+    <h2 id="cTitle">New contract</h2>
+    <div class="form">
+      <div class="f"><label for="cNo">Contract #</label><input id="cNo" autocomplete="off" autocapitalize="characters"></div>
+      <div class="f"><label for="cBuyer">Buyer</label><select id="cBuyer"></select></div>
+      <div class="f"><label for="cComm">Commodity</label><select id="cComm"></select></div>
+      <div class="f"><label for="cYear">Crop year</label><select id="cYear"></select></div>
+      <div class="f"><label for="cBu">Bushels</label><input id="cBu" inputmode="decimal"></div>
+      <div class="f"><label for="cStatus">Status</label><select id="cStatus"><option>Open</option><option>Closed</option></select></div>
+      <div class="f"><label for="cStart">Ship start</label><input id="cStart" type="date"></div>
+      <div class="f"><label for="cEnd">Ship end</label><input id="cEnd" type="date"></div>
+      <div class="f full"><label for="cEmail">Email for nightly shipments (leave blank to use the buyer's)</label><input id="cEmail" type="email" autocomplete="off"></div>
+      <div class="f full"><label for="cNotes">Notes</label><input id="cNotes" autocomplete="off"></div>
+    </div>
+    <p class="hint" id="cMsg"></p>
+    <div class="foot">
+      <span class="hint" id="cShipped"></span>
+      <div class="footbtns"><button class="ghost" type="button" id="cCancel">Cancel</button><button class="big small" type="button" id="cSave">Save</button></div>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="adjDlg">
+  <form method="dialog" id="adjForm">
+    <h2 id="aTitle">Adjustment</h2>
+    <p class="hint" id="aIntro"></p>
+    <div class="form">
+      <div class="f"><label for="aComm">Commodity</label><select id="aComm"></select></div>
+      <div class="f"><label for="aYear">Crop year</label><select id="aYear"></select></div>
+      <div class="f full"><div class="bookline">Book balance: <b id="aBook">—</b> bu</div></div>
+      <div class="f" id="aBuBox"><label for="aBu" id="aBuLbl">Bushels</label><input id="aBu" inputmode="decimal"></div>
+      <div class="f"><label for="aDate">Date</label><input id="aDate" type="date"></div>
+      <div class="f"><label for="aBy">Entered by</label><input id="aBy" autocomplete="off"></div>
+      <div class="f full"><label for="aNote">Note</label><input id="aNote" autocomplete="off"></div>
+    </div>
+    <div class="bookline big2" id="aResult"></div>
+    <p class="hint" id="aMsg"></p>
+    <div class="foot">
+      <span></span>
+      <div class="footbtns"><button class="ghost" type="button" id="aCancel">Cancel</button><button class="big small" type="button" id="aSave">Save</button></div>
+    </div>
+  </form>
+</dialog>
 
 <dialog id="settings">
   <form id="setForm" method="dialog">
@@ -159,6 +228,8 @@
 
 <div class="toast" id="toast" hidden></div>
 <script src="parsers.js"></script>
+<script src="reports.js"></script>
 <script src="app.js"></script>
+<script src="office.js"></script>
 </body>
 </html>

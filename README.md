@@ -7,7 +7,8 @@ Scale house app for Blue Barn Land & Cattle. Weighs trucks in and out, reads the
 | File | What it is |
 | --- | --- |
 | `index.html`, `app.js`, `styles.css` | The scale app |
-| `parsers.js` | Reads the scale and moisture tester lines; splits loads by share |
+| `parsers.js` | Reads the scale and moisture tester lines; splits loads by share; picks the contract |
+| `office.js`, `reports.js` | Office side: contracts, reports, inventory adjustments |
 | `sw.js`, `manifest.webmanifest` | Lets the app open with no internet |
 | `backend/Code.gs` | Google Apps Script backend that writes to the Sheet |
 | `test/` | Automated tests (run with Node; not needed on the scale PC) |
@@ -47,6 +48,16 @@ Every night at 7 pm, each buyer that shipped grain gets one email from BBL&C: a 
 
 **Contracts that fill.** Loads are never split. At weigh-out, if the contract has at least half this load left it takes the whole load (a little over is fine); if it has less, the whole load goes on the same buyer's next open contract for the same commodity (earliest shipment start first), even if that contract's shipment period hasn't started. The ticket prints the contract it went on and "(TEST-C1 FILLED)". A contract with less than half a typical load left drops off the scale's list; set **TypicalLoadBu** in Settings (default 1000). If the buyer has no other open contract, the load stays on the chosen contract and the office gets a warning. The **TicketContracts** tab shows which contract each ticket went on; fix a row there by hand if needed.
 
+## Office side
+Tap **Office** at the top (same app, same link). It works on the iPad or a phone, and shows the last copy when the internet is down.
+- **Contracts:** add, change or close contracts. Closed and filled contracts drop off the scale. The contract # can't change once saved.
+- **Fields:** loads, wet and dry bushels, average moisture and test weight per field; tap a field for each owner's share and its tickets. Add an **Acres** column to the Fields tab for bushels per acre.
+- **Inventory:** on hand (opening + dry bushels in − out ± adjustments), what's left to ship on open contracts, and unsold, per crop and crop year.
+- **Write-offs:** shrink written off at each bins-empty close-out, as bushels and % of what came in.
+- **Adjustments:** opening balance, bins measured, bins empty (zero out), other. **Undo** marks the line Void in the Sheet; nothing is deleted.
+- **Dry bushels** use water shrink to the commodity's standard moisture (Commodities tab). To use a flat shrink instead, add **ShrinkPerPoint** to Settings (e.g. 1.4 for 1.4% per point).
+- **Print** prints the report you're looking at on letter paper.
+
 ## Scale PC tips
 - Use **Chrome** or **Edge**. Serial ports don't work in Safari or Firefox.
 - Install it as an app: Chrome menu → **Cast, save and share → Install page as app**.
@@ -60,6 +71,8 @@ In the backend, paste the real Sheet ID into `switchToLive()` and run it once. I
 ```
 node test/unit.test.js          # parsers and backend logic
 node test/emails.test.js        # nightly buyer emails and contract roll-over
+node test/reports.test.js       # office reports, contracts, adjustments
+node test/server.js & node test/e2e-office.js   # office side in the browser
 ROLLOVER=1 node test/server.js & node test/e2e-rollover.js   # roll-over in the browser
 node test/server.js &           # fake backend on a mock Sheet
 node test/e2e.js shot.png       # browser run-through on the simulator

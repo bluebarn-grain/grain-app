@@ -116,6 +116,37 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 dialog form{display:flex;flex-direction:column;gap:12px}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:11px 18px;border-radius:8px;font-weight:600;max-width:calc(100% - 32px);z-index:20;box-shadow:0 4px 18px rgba(0,0,0,.25)}
 
+/* Office side */
+.brand{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.seg.nav button{padding:6px 16px;font-size:15px}
+.obar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px}
+.tabs{display:flex;flex-wrap:wrap;gap:6px}
+.tabs button{font-family:var(--f-display);font-weight:700;font-size:15px;padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+.tabs button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.ofilters{display:flex;gap:6px;align-items:center}
+.ofilters select{width:auto;font-size:15px;padding:6px 8px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.ohead{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px}
+.ohead h2{font-size:19px}
+tr.total td{font-weight:700;border-top:2px solid var(--ink)}
+tr.sub td{background:var(--bg);cursor:default;white-space:normal}
+tr.sub:hover td{background:var(--bg)}
+tr.closed td{color:var(--muted)}
+.subwrap{display:flex;flex-direction:column;gap:8px;padding:6px 2px 10px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--line);border-radius:99px;padding:3px 10px;font-size:13px;background:var(--panel)}
+.inv{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
+.invcard{border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.invcard h3{font-family:var(--f-display);font-size:19px;margin:0}
+.ledger{display:grid;grid-template-columns:1fr auto;gap:3px 12px;font-variant-numeric:tabular-nums;font-size:14px}
+.ledger .n{text-align:right;font-family:var(--f-mono)}
+.ledger .tot{font-weight:700;border-top:1px solid var(--ink);padding-top:3px}
+.ledger .big3{font-size:18px}
+.neg{color:var(--bad)}
+.bookline{font-size:15px}.bookline b{font-family:var(--f-mono)}
+.big2{font-size:17px;font-weight:600;min-height:1.4em}
+.rowbtns{display:flex;gap:6px;flex-wrap:wrap}
+
 /* Ticket printing: only the ticket goes to the printer. */
 #printArea{display:none}
 @media print{
@@ -124,4 +155,10 @@ dialog form{display:flex;flex-direction:column;gap:12px}
   body>*:not(#printArea){display:none!important}
   #printArea{display:block!important}
   #printArea pre{font:10.5pt/1.15 "Courier New",Courier,monospace;color:#000;margin:0;white-space:pre}
+  /* Office reports print on letter paper */
+  @page report{size:letter portrait;margin:.5in}
+  #printArea.report{page:report;font:10pt Arial,sans-serif;color:#000}
+  #printArea.report table{font-size:9.5pt}
+  #printArea.report td,#printArea.report th{border-bottom:1px solid #999;padding:3px 6px;white-space:normal}
+  #printArea.report h1{font-size:15pt;margin:0 0 6px}
 }

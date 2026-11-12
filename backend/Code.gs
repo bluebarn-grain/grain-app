@@ -56,6 +56,10 @@ function handle_(p) {
       case 'ping': return out_({ ok: true, sheet: ss.getName(), time: new Date().toISOString() });
       case 'lists': return out_(merge_({ ok: true }, lists_(ss)));
       case 'saveTickets': return out_(merge_({ ok: true }, saveTickets_(ss, p.tickets || [], p.station || '')));
+      case 'officeData': return out_(merge_({ ok: true }, officeData_(ss)));
+      case 'saveContract': return out_(merge_({ ok: true }, saveContract_(ss, p.contract || {}, !!p.isNew)));
+      case 'saveAdjustment': return out_(merge_({ ok: true }, saveAdjustment_(ss, p.adjustment || {})));
+      case 'voidAdjustment': return out_(merge_({ ok: true }, voidAdjustment_(ss, p.adjNo, p.by)));
       default: return out_({ ok: false, error: 'Unknown action: ' + p.action });
     }
   } catch (err) {
@@ -472,4 +476,113 @@ function buildEmail_(g, contracts, toDate, loadsToDate, truckBu, banter, dayNo, 
 
   var csv = [head].concat(rows).map(function (r) { return r.map(function (v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(','); }).join('\n');
   return { subject: subject, text: text, html: html, csv: csv, ticketNos: rows.map(function (r) { return r[0]; }).filter(function (v, i, a) { return a.indexOf(v) === i; }) };
+}
+
+
+/* ======================================================================
+ * Office side: everything the reports need, contract entry, inventory adjustments
+ * ==================================================================== */
+
+var CONTRACT_COLUMNS = ['ContractNo', 'Buyer', 'Commodity', 'CropYear', 'Bushels', 'ShipStart', 'ShipEnd', 'Status', 'Email', 'Notes'];
+var ADJ_COLUMNS = ['AdjNo', 'Date', 'Commodity', 'CropYear', 'Type', 'Bushels', 'BookBefore', 'BookAfter', 'Note', 'By', 'CreatedAt', 'Status'];
+var ADJ_TYPES = ['Opening', 'Measured', 'BinsEmpty', 'Other'];
+
+function sheetOrNew_(ss, name, cols) {
+  var sh = ss.getSheetByName(name);
+  if (!sh) sh = ss.insertSheet(name);
+  return { sh: sh, cols: ensureColumns_(sh, cols) };
+}
+
+/** Raw data for the office screens. The app does the math so it works offline from the last copy. */
+function officeData_(ss) {
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try { allocatePending_(ss); } finally { lock.releaseLock(); }
+  var keep = ['TicketNo', 'DateTime', 'Direction', 'Status', 'Commodity', 'CropYear', 'Field', 'ContractNo', 'Buyer', 'Truck', 'LoadNo',
+    'GrossLb', 'TareLb', 'NetLb', 'WetBu', 'MoisturePct', 'TestWeight', 'FMPct', 'BOLNo', 'TestTicket', 'RolledFrom'];
+  var tickets = rows_(tab_(ss, 'Tickets')).filter(function (t) { return t.TicketNo !== '' && t.Status === 'Closed'; })
+    .map(function (t) { var o = {}; keep.forEach(function (k) { o[k] = t[k]; }); return o; });
+  var opt = function (name) { var sh = ss.getSheetByName(name); return sh ? rows_(sh) : []; };
+  var settings = {}; rows_(tab_(ss, 'Settings')).forEach(function (r) { if (r.Key) settings[r.Key] = r.Value; });
+  return {
+    tickets: tickets,
+    splits: rows_(tab_(ss, 'TicketSplits')),
+    allocations: opt('TicketContracts'),
+    adjustments: opt('Adjustments').filter(function (a) { return String(a.Status) !== 'Void'; }),
+    contracts: rows_(tab_(ss, 'Contracts')).filter(function (c) { return c.ContractNo; }),
+    customers: rows_(tab_(ss, 'Customers')).filter(function (c) { return c.Customer; }),
+    fields: rows_(tab_(ss, 'Fields')).filter(function (f) { return f.Field; }),
+    commodities: rows_(tab_(ss, 'Commodities')).filter(function (c) { return c.Commodity; }),
+    settings: settings,
+    at: new Date().toISOString()
+  };
+}
+
+function date_(v) {
+  if (!v) return '';
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v));
+  var d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12) : new Date(v);  // a plain date is noon local, so it never shows as the day before
+  return isNaN(d) ? '' : d;
+}
+
+/** New contract, or changes to one. The contract number can't change once saved. */
+function saveContract_(ss, c, isNew) {
+  var no = String(c.ContractNo || '').trim();
+  if (!no) throw new Error('Contract # is required');
+  if (!c.Buyer) throw new Error('Pick a buyer');
+  if (!c.Commodity) throw new Error('Pick a commodity');
+  var bu = Number(c.Bushels);
+  if (!(bu > 0)) throw new Error('Bushels must be more than 0');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var t = sheetOrNew_(ss, 'Contracts', CONTRACT_COLUMNS), sh = t.sh, m = t.cols.map;
+    var v = sh.getDataRange().getValues(), at = -1;
+    for (var i = 1; i < v.length; i++) if (String(v[i][m.ContractNo - 1]).trim() === no) { at = i + 1; break; }
+    if (isNew && at > 0) throw new Error('Contract ' + no + ' already exists');
+    if (!isNew && at < 0) throw new Error('Contract ' + no + ' was not found');
+    var row = at > 0 ? v[at - 1].slice() : new Array(t.cols.width).fill('');
+    while (row.length < t.cols.width) row.push('');
+    var set = function (k, val) { row[m[k] - 1] = val; };
+    set('ContractNo', no); set('Buyer', c.Buyer); set('Commodity', c.Commodity); set('CropYear', Number(c.CropYear) || '');
+    set('Bushels', bu); set('ShipStart', date_(c.ShipStart)); set('ShipEnd', date_(c.ShipEnd));
+    set('Status', c.Status === 'Closed' ? 'Closed' : 'Open'); set('Email', String(c.Email || '').trim()); set('Notes', c.Notes || '');
+    if (at > 0) sh.getRange(at, 1, 1, t.cols.width).setValues([row]);
+    else sh.getRange(sh.getLastRow() + 1, 1, 1, t.cols.width).setValues([row]);
+    return { contractNo: no };
+  } finally { lock.releaseLock(); }
+}
+
+/** Inventory adjustment. Bushels is the change (minus to write off). The app works out BookBefore from its reports. */
+function saveAdjustment_(ss, a) {
+  if (ADJ_TYPES.indexOf(a.Type) < 0) throw new Error('Unknown adjustment type');
+  if (!a.Commodity || !a.CropYear) throw new Error('Pick a commodity and crop year');
+  var bu = Math.round(Number(a.Bushels) * 100) / 100;
+  if (isNaN(bu) || (bu === 0 && a.Type !== 'BinsEmpty')) throw new Error('Bushels must be a number other than 0');
+  if (!String(a.By || '').trim()) throw new Error('Enter who is making the adjustment');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var t = sheetOrNew_(ss, 'Adjustments', ADJ_COLUMNS), sh = t.sh, m = t.cols.map;
+    var last = 0; rows_(sh).forEach(function (r) { last = Math.max(last, Number(r.AdjNo) || 0); });
+    var row = new Array(t.cols.width).fill('');
+    var set = function (k, val) { row[m[k] - 1] = val; };
+    var before = Number(a.BookBefore);
+    set('AdjNo', last + 1); set('Date', date_(a.Date) || new Date()); set('Commodity', a.Commodity); set('CropYear', Number(a.CropYear));
+    set('Type', a.Type); set('Bushels', bu); set('BookBefore', isNaN(before) ? '' : before); set('BookAfter', isNaN(before) ? '' : Math.round((before + bu) * 100) / 100);
+    set('Note', a.Note || ''); set('By', String(a.By).trim()); set('CreatedAt', new Date()); set('Status', 'Active');
+    sh.getRange(sh.getLastRow() + 1, 1, 1, t.cols.width).setValues([row]);
+    return { adjNo: last + 1 };
+  } finally { lock.releaseLock(); }
+}
+
+/** Undo an adjustment. The row stays in the Sheet marked Void. */
+function voidAdjustment_(ss, adjNo, by) {
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var sh = tab_(ss, 'Adjustments'), m = ensureColumns_(sh, ADJ_COLUMNS).map, v = sh.getDataRange().getValues();
+    for (var i = 1; i < v.length; i++) if (Number(v[i][m.AdjNo - 1]) === Number(adjNo)) {
+      sh.getRange(i + 1, m.Status).setValue('Void');
+      sh.getRange(i + 1, m.Note).setValue(String(v[i][m.Note - 1] || '') + ' [voided by ' + (by || '?') + ' ' + new Date().toLocaleDateString() + ']');
+      return { adjNo: Number(adjNo) };
+    }
+    throw new Error('Adjustment ' + adjNo + ' was not found');
+  } finally { lock.releaseLock(); }
 }

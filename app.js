@@ -395,7 +395,7 @@ function ticketText(t) {
 function printTicket(t) {
   let a = $('printArea');
   if (!a) { a = document.createElement('div'); a.id = 'printArea'; document.body.appendChild(a); }
-  a.innerHTML = `<pre>${esc(ticketText(t))}</pre>`;
+  a.className = ''; a.innerHTML = `<pre>${esc(ticketText(t))}</pre>`;
   setTimeout(() => { try { window.print(); } catch (e) { toast('Printing failed: ' + e.message); } }, 100);
 }
 
@@ -614,6 +614,10 @@ async function init() {
   $('diag').addEventListener('toggle', () => { if ($('diag').open) renderDiag(); });
   for (const id of Object.keys(FORM_KEYS).concat(['m', 'tw', 'tp', 'fm'])) { $(id).addEventListener('change', onFormEdit); $(id).addEventListener('input', onFormEdit); }
   window.addEventListener('online', () => sync(true));
+
+  // Hand the office screens (office.js) what they need from here.
+  window.BBG_APP = { api, DB, S, L, toast, esc, fmt0, fmt2, dt, refreshLists, online: () => S.net === 'online', configured: () => !!(S.config.backendUrl && S.config.key) };
+  window.dispatchEvent(new Event('bbg-ready'));
 
   fillLists(); loadDetail(); render();
   if (S.config.sim) simStart();
