@@ -4,7 +4,7 @@
 (() => {
 'use strict';
 const P = window.BBG;
-const VERSION = '0.1.2';
+const VERSION = '0.1.3';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt0 = n => (n == null || isNaN(n)) ? '—' : Math.round(n).toLocaleString('en-US');
@@ -361,14 +361,13 @@ function ticketText(t) {
   if (t.test) out.push('', '******** TEST TICKET - NOT VALID ********');
   return out.join('\n');
 }
+// Prints only the ticket: the page's print stylesheet hides the app and shows #printArea.
+// (Printing from a hidden frame printed the whole screen on iPad Safari.)
 function printTicket(t) {
-  let f = $('printFrame');
-  if (!f) { f = document.createElement('iframe'); f.id = 'printFrame'; f.title = 'Ticket print'; f.style.cssText = 'position:fixed;width:0;height:0;border:0;right:0;bottom:0'; document.body.appendChild(f); }
-  const doc = f.contentDocument;
-  doc.open();
-  doc.write(`<!doctype html><html><head><title>Ticket ${pad6(t.no)}</title><style>@page{margin:.4in}body{margin:0}pre{font:12pt "Courier New",Courier,monospace;margin:0}</style></head><body><pre>${esc(ticketText(t))}</pre></body></html>`);
-  doc.close();
-  setTimeout(() => { try { f.contentWindow.focus(); f.contentWindow.print(); } catch (e) { toast('Printing failed: ' + e.message); } }, 200);
+  let a = $('printArea');
+  if (!a) { a = document.createElement('div'); a.id = 'printArea'; document.body.appendChild(a); }
+  a.innerHTML = `<pre>${esc(ticketText(t))}</pre>`;
+  setTimeout(() => { try { window.print(); } catch (e) { toast('Printing failed: ' + e.message); } }, 100);
 }
 
 // ---------------- sync ----------------

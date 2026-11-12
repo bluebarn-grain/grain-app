@@ -115,3 +115,13 @@ dialog{border:1px solid var(--line);border-radius:12px;background:var(--panel);c
 dialog::backdrop{background:rgba(0,0,0,.45)}
 dialog form{display:flex;flex-direction:column;gap:12px}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:11px 18px;border-radius:8px;font-weight:600;max-width:calc(100% - 32px);z-index:20;box-shadow:0 4px 18px rgba(0,0,0,.25)}
+
+/* Ticket printing: only the ticket goes to the printer. */
+#printArea{display:none}
+@media print{
+  @page{margin:.4in}
+  html,body{background:#fff!important;color:#000!important;padding:0!important}
+  body>*:not(#printArea){display:none!important}
+  #printArea{display:block!important}
+  #printArea pre{font:12pt "Courier New",Courier,monospace;color:#000;margin:0;white-space:pre}
+}
