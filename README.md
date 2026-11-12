@@ -55,6 +55,7 @@ Tap **Office** at the top (same app, same link). It works on the iPad or a phone
 - **Contracts:** add, change or close contracts. Closed and filled contracts drop off the scale. The contract # can't change once saved.
 - **Field report:** loads, wet and dry bushels, average moisture and test weight per field; tap a field for each owner's share and its tickets. Bushels per acre show once a field has acres.
 - **Inventory:** on hand (opening + dry bushels in − out ± adjustments), what's left to ship on open contracts, and unsold, per crop and crop year.
+- **Landlord grain:** each landlord's grain still in your bins (their share of each load, by the field's split, minus what you've bought). **Buy landlord grain** records buying some or all of it, with an optional price, so it becomes yours to sell; nothing moves. Inventory shows what's still theirs vs. yours, and unsold counts only yours. Bins empty is blocked until landlords' grain is bought. An opening balance can be put in a landlord's name.
 - **Write-offs:** shrink written off at each bins-empty close-out, as bushels and % of what came in.
 - **Adjustments:** opening balance, bins measured, bins empty (zero out), other. **Undo** marks the line Void in the Sheet; nothing is deleted.
 - **Dry bushels** use water shrink to the commodity's standard moisture (Commodities tab). To use a flat shrink instead, add **ShrinkPerPoint** to Settings (e.g. 1.4 for 1.4% per point).

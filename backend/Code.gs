@@ -62,6 +62,8 @@ function handle_(p) {
       case 'saveCustomer': return out_(merge_({ ok: true }, saveCustomer_(ss, p.customer || {}, !!p.isNew)));
       case 'saveField': return out_(merge_({ ok: true }, saveField_(ss, p.field || {}, !!p.isNew)));
       case 'saveShares': return out_(merge_({ ok: true }, saveShares_(ss, p.fieldName, p.cropYear, p.shares || [])));
+      case 'savePurchase': return out_(merge_({ ok: true }, savePurchase_(ss, p.purchase || {})));
+      case 'voidPurchase': return out_(merge_({ ok: true }, voidPurchase_(ss, p.purchaseNo, p.by)));
       case 'voidAdjustment': return out_(merge_({ ok: true }, voidAdjustment_(ss, p.adjNo, p.by)));
       default: return out_({ ok: false, error: 'Unknown action: ' + p.action });
     }
@@ -487,7 +489,7 @@ function buildEmail_(g, contracts, toDate, loadsToDate, truckBu, banter, dayNo, 
  * ==================================================================== */
 
 var CONTRACT_COLUMNS = ['ContractNo', 'Buyer', 'Commodity', 'CropYear', 'Bushels', 'ShipStart', 'ShipEnd', 'Status', 'Email', 'Notes'];
-var ADJ_COLUMNS = ['AdjNo', 'Date', 'Commodity', 'CropYear', 'Type', 'Bushels', 'BookBefore', 'BookAfter', 'Note', 'By', 'CreatedAt', 'Status'];
+var ADJ_COLUMNS = ['AdjNo', 'Date', 'Commodity', 'CropYear', 'Type', 'Bushels', 'BookBefore', 'BookAfter', 'Note', 'By', 'CreatedAt', 'Status', 'Owner'];
 var ADJ_TYPES = ['Opening', 'Measured', 'BinsEmpty', 'Other'];
 
 function sheetOrNew_(ss, name, cols) {
@@ -511,6 +513,7 @@ function officeData_(ss) {
     splits: rows_(tab_(ss, 'TicketSplits')),
     allocations: opt('TicketContracts'),
     adjustments: opt('Adjustments').filter(function (a) { return String(a.Status) !== 'Void'; }),
+    purchases: opt('Purchases').filter(function (a) { return String(a.Status) !== 'Void'; }),
     contracts: rows_(tab_(ss, 'Contracts')).filter(function (c) { return c.ContractNo; }),
     customers: rows_(tab_(ss, 'Customers')).filter(function (c) { return c.Customer; }),
     fields: rows_(tab_(ss, 'Fields')).filter(function (f) { return f.Field; }),
@@ -572,6 +575,7 @@ function saveAdjustment_(ss, a) {
     set('AdjNo', last + 1); set('Date', date_(a.Date) || new Date()); set('Commodity', a.Commodity); set('CropYear', Number(a.CropYear));
     set('Type', a.Type); set('Bushels', bu); set('BookBefore', isNaN(before) ? '' : before); set('BookAfter', isNaN(before) ? '' : Math.round((before + bu) * 100) / 100);
     set('Note', a.Note || ''); set('By', String(a.By).trim()); set('CreatedAt', new Date()); set('Status', 'Active');
+    set('Owner', a.Type === 'Opening' ? String(a.Owner || '').trim() : '');  // opening grain can belong to a landlord; everything else is the farm's
     sh.getRange(sh.getLastRow() + 1, 1, 1, t.cols.width).setValues([row]);
     return { adjNo: last + 1 };
   } finally { lock.releaseLock(); }
@@ -662,5 +666,47 @@ function saveShares_(ss, fieldName, cropYear, shares) {
     if (keepRows.length) sh.getRange(2, 1, keepRows.length, width).setValues(keepRows);
     if (blanks > 0) sh.getRange(2 + keepRows.length, 1, blanks, width).setValues(new Array(blanks).fill(0).map(function () { return new Array(width).fill(''); }));
     return { field: fieldName, cropYear: cropYear, shares: clean };
+  } finally { lock.releaseLock(); }
+}
+
+
+/* ---- buying landlord grain that's in storage ---- */
+var PURCHASE_COLUMNS = ['PurchaseNo', 'Date', 'Seller', 'Commodity', 'CropYear', 'Bushels', 'PricePerBu', 'Amount', 'Note', 'By', 'CreatedAt', 'Status'];
+
+/** Records buying a landlord's stored grain. Ownership moves to the farm; the bushels don't move. */
+function savePurchase_(ss, p) {
+  var seller = String(p.Seller || '').trim();
+  var cust = rows_(tab_(ss, 'Customers')).filter(function (c) { return c.Customer === seller; })[0];
+  if (!cust) throw new Error('Pick the landlord');
+  if (cust.Type !== 'Landlord') throw new Error(seller + ' is not a landlord');
+  if (!p.Commodity || !p.CropYear) throw new Error('Pick a commodity and crop year');
+  var bu = Math.round(Number(p.Bushels) * 100) / 100;
+  if (!(bu > 0)) throw new Error('Bushels must be more than 0');
+  var price = p.PricePerBu === '' || p.PricePerBu == null ? '' : Math.round(Number(p.PricePerBu) * 10000) / 10000;
+  if (price !== '' && !(price >= 0)) throw new Error('Price must be a number, or blank');
+  if (!String(p.By || '').trim()) throw new Error('Enter who is recording the purchase');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var t = sheetOrNew_(ss, 'Purchases', PURCHASE_COLUMNS), sh = t.sh, m = t.cols.map;
+    var last = 0; rows_(sh).forEach(function (r) { last = Math.max(last, Number(r.PurchaseNo) || 0); });
+    var row = new Array(t.cols.width).fill(''), set = function (k, v) { row[m[k] - 1] = v; };
+    set('PurchaseNo', last + 1); set('Date', date_(p.Date) || new Date()); set('Seller', seller); set('Commodity', p.Commodity); set('CropYear', Number(p.CropYear));
+    set('Bushels', bu); set('PricePerBu', price); set('Amount', price === '' ? '' : Math.round(bu * price * 100) / 100);
+    set('Note', p.Note || ''); set('By', String(p.By).trim()); set('CreatedAt', new Date()); set('Status', 'Active');
+    sh.getRange(sh.getLastRow() + 1, 1, 1, t.cols.width).setValues([row]);
+    return { purchaseNo: last + 1 };
+  } finally { lock.releaseLock(); }
+}
+
+function voidPurchase_(ss, no, by) {
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var sh = tab_(ss, 'Purchases'), m = ensureColumns_(sh, PURCHASE_COLUMNS).map, v = sh.getDataRange().getValues();
+    for (var i = 1; i < v.length; i++) if (Number(v[i][m.PurchaseNo - 1]) === Number(no)) {
+      sh.getRange(i + 1, m.Status).setValue('Void');
+      sh.getRange(i + 1, m.Note).setValue(String(v[i][m.Note - 1] || '') + ' [voided by ' + (by || '?') + ' ' + new Date().toLocaleDateString() + ']');
+      return { purchaseNo: Number(no) };
+    }
+    throw new Error('Purchase ' + no + ' was not found');
   } finally { lock.releaseLock(); }
 }

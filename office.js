@@ -39,12 +39,13 @@ function status(msg) {
   const d = O.data;
   $('oStatus').textContent = msg || (d ? `Updated ${new Date(d.at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` + (testMode() ? ' · TEST MODE: test tickets included' : '') : '');
 }
-const D = () => O.data || { tickets: [], splits: [], allocations: [], adjustments: [], contracts: [], customers: [], fields: [], shares: [], commodities: [], settings: {} };
+const D = () => O.data || { tickets: [], splits: [], allocations: [], adjustments: [], purchases: [], contracts: [], customers: [], fields: [], shares: [], commodities: [], settings: {} };
 function years() {
   const ys = new Set();
   D().tickets.forEach(t => t.CropYear && ys.add(String(t.CropYear)));
   D().contracts.forEach(c => c.CropYear && ys.add(String(c.CropYear)));
   D().adjustments.forEach(a => a.CropYear && ys.add(String(a.CropYear)));
+  (D().purchases || []).forEach(a => a.CropYear && ys.add(String(a.CropYear)));
   const y = new Date().getFullYear(); ys.add(String(y));
   return [...ys].sort().reverse();
 }
@@ -65,7 +66,7 @@ function render() {
   document.querySelectorAll('#officeView .tabs button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === O.tab)));
   $('oYear').hidden = O.tab === 'adjustments' || O.tab === 'customers';
   status();
-  $('oBody').innerHTML = ({ contracts, customers, fieldsetup, fields, inventory, writeoffs, adjustments })[O.tab]();
+  $('oBody').innerHTML = ({ contracts, customers, fieldsetup, fields, inventory, landlord, writeoffs, adjustments })[O.tab]();
   wire();
 }
 
@@ -283,13 +284,81 @@ function inventory() {
       ${line(`Out to buyers · ${r.loadsOut} load${r.loadsOut === 1 ? '' : 's'}`, -r.out)}
       ${r.adjust ? line('Adjustments', r.adjust) : ''}
       ${line('On hand', r.onHand, 'tot big3')}
+      ${r.landlordHeld ? r.owners.filter(o => o.type !== 'Operator' && o.balance).map(o => line(`&nbsp;&nbsp;Still ${e(o.owner)}'s`, -o.balance)).join('') + line(`&nbsp;&nbsp;Yours`, r.farmOwned, 'tot') : ''}
       ${line('Open contracts to ship', -r.openContracts)}
-      ${line('Unsold', r.unsold, 'tot')}
+      ${line('Unsold (yours)', r.unsold, 'tot')}
     </div>
     ${r.contracts.length ? `<div class="hint">${r.contracts.map(c => `${e(c.contractNo)} ${e(c.buyer)}: ${n0(c.left)} left`).join(' · ')}</div>` : ''}
-    <div class="rowbtns"><button class="ghost" type="button" data-adj="Measured" data-c="${e(r.commodity)}" data-y="${e(r.cropYear)}">Bins measured</button><button class="ghost" type="button" data-adj="BinsEmpty" data-c="${e(r.commodity)}" data-y="${e(r.cropYear)}">Bins empty — zero out</button></div>
+    <div class="rowbtns">${r.landlordHeld ? `<button class="ghost" type="button" data-buy="1" data-c="${e(r.commodity)}" data-y="${e(r.cropYear)}">Buy landlord grain</button>` : ''}<button class="ghost" type="button" data-adj="Measured" data-c="${e(r.commodity)}" data-y="${e(r.cropYear)}">Bins measured</button><button class="ghost" type="button" data-adj="BinsEmpty" data-c="${e(r.commodity)}" data-y="${e(r.cropYear)}">Bins empty — zero out</button></div>
   </div>`).join('')}</div>
-  <p class="hint">On hand = opening + dry bushels in − bushels out ± adjustments. Unsold = on hand − what's left to ship on open contracts.</p>`;
+  <p class="hint">On hand = opening + dry bushels in − bushels out ± adjustments. Landlord grain stays theirs until you buy it on the Landlord grain tab. Unsold = your bushels − what's left to ship on open contracts.</p>`;
+}
+
+// ---------- landlord grain ----------
+function landlord() {
+  const held = R.landlordGrain(D(), opt());
+  const ps = (D().purchases || []).filter(p => !O.year || String(p.CropYear) === String(O.year)).slice().sort((a, b) => Number(b.PurchaseNo) - Number(a.PurchaseNo));
+  const owed = ps.reduce((a, p) => a + (Number(p.Amount) || 0), 0);
+  return `<div class="ohead"><h2>Landlord grain in storage</h2><button class="big small" type="button" data-buy="1">Buy landlord grain</button></div>
+    ${held.length ? `<div class="tblwrap"><table><thead><tr><th>Landlord</th><th>Crop</th><th class="n">Delivered (dry)</th><th class="n">Bought by you</th><th class="n">Still theirs</th><th></th></tr></thead><tbody>
+    ${held.map(h => `<tr><td><b>${e(h.landlord)}</b></td><td>${e(h.commodity)} ${e(h.cropYear)}</td><td class="n">${n2(h.delivered)}</td><td class="n">${n2(h.bought)}</td><td class="n"><b>${n2(h.stillTheirs)}</b></td>
+      <td>${h.stillTheirs > 0.004 ? `<button class="ghost" type="button" data-buy="1" data-s="${e(h.landlord)}" data-c="${e(h.commodity)}" data-y="${e(h.cropYear)}">Buy</button>` : '<span class="hint">All bought</span>'}</td></tr>`).join('')}
+    </tbody></table></div>` : `<div class="empty">No landlord grain${O.year ? ' for ' + O.year : ''}.</div>`}
+    <div class="ohead"><h2>Purchases</h2></div>
+    ${ps.length ? `<div class="tblwrap"><table><thead><tr><th>#</th><th>Date</th><th>Landlord</th><th>Crop</th><th class="n">Bushels</th><th class="n">Price</th><th class="n">Amount</th><th>By</th><th>Note</th><th></th></tr></thead><tbody>
+    ${ps.map(p => `<tr><td>${e(p.PurchaseNo)}</td><td>${day(p.Date)}</td><td>${e(p.Seller)}</td><td>${e(p.Commodity)} ${e(p.CropYear)}</td><td class="n">${n2(p.Bushels)}</td><td class="n">${p.PricePerBu === '' || p.PricePerBu == null ? '—' : '$' + Number(p.PricePerBu).toFixed(4).replace(/0{1,2}$/, '')}</td><td class="n">${p.Amount === '' || p.Amount == null ? '—' : '$' + n2(p.Amount)}</td><td>${e(p.By)}</td><td>${e(p.Note)}</td><td><button class="ghost bad" type="button" data-unbuy="${e(p.PurchaseNo)}">Undo</button></td></tr>`).join('')}
+    ${owed ? `<tr class="total"><td colspan="6">Total</td><td class="n">$${n2(owed)}</td><td colspan="3"></td></tr>` : ''}
+    </tbody></table></div>` : '<div class="empty">No purchases yet.</div>'}
+    <p class="hint">Landlords' shares come from each field's split. Their grain stays theirs, and doesn't count as yours to sell, until you record buying it here.</p>`;
+}
+function stillTheirs(seller, c, y) {
+  const h = R.landlordGrain(D(), { includeTest: testMode() }).find(x => x.landlord === seller && x.commodity === c && String(x.cropYear) === String(y));
+  return h ? h.stillTheirs : 0;
+}
+function openBuy(seller, c, y) {
+  const held = R.landlordGrain(D(), { includeTest: testMode() }).filter(h => h.stillTheirs > 0.004);
+  const landlords = D().customers.filter(x => x.Type === 'Landlord').map(x => x.Customer).sort((a, b) => a.localeCompare(b));
+  const first = seller || (held[0] && held[0].landlord) || landlords[0] || '';
+  const sel = (id, items, v) => { $(id).innerHTML = items.map(i => `<option${String(i) === String(v) ? ' selected' : ''}>${e(i)}</option>`).join(''); };
+  sel('bSeller', landlords, first);
+  const h0 = held.find(h => h.landlord === first);
+  sel('bComm', commodities(), c || (h0 && h0.commodity) || 'Corn');
+  const ys = [...new Set([String(new Date().getFullYear()), ...years()])].sort().reverse();
+  sel('bYear', ys, y || (h0 && h0.cropYear) || O.year || ys[0]);
+  $('bBu').value = ''; $('bPrice').value = ''; $('bNote').value = ''; $('bDate').value = today();
+  $('bBy').value = $('bBy').value || (A.S.config && A.S.config.operator) || '';
+  $('bMsg').textContent = '';
+  buyPreview(); $('buyDlg').showModal();
+}
+function buyPreview() {
+  const held = stillTheirs($('bSeller').value, $('bComm').value, $('bYear').value);
+  $('bHeld').textContent = n2(held); $('bAll').hidden = !(held > 0.004);
+  const bu = Number(String($('bBu').value).replace(/,/g, '')), price = Number(String($('bPrice').value).replace(/[$,]/g, ''));
+  $('bResult').innerHTML = !(bu > 0) ? '' : `${n2(bu)} bu${$('bPrice').value && price >= 0 ? ` × $${price} = <b>$${n2(bu * price)}</b>` : ''} · ${e($('bSeller').value)} keeps ${n2(Math.max(0, held - bu))} bu`;
+}
+async function saveBuy() {
+  const held = stillTheirs($('bSeller').value, $('bComm').value, $('bYear').value);
+  const bu = Number(String($('bBu').value).replace(/,/g, '')), priceTxt = String($('bPrice').value).replace(/[$,]/g, '').trim();
+  if (!$('bSeller').value) return msg('bMsg', 'Pick the landlord.');
+  if (!(bu > 0)) return msg('bMsg', 'Enter the bushels bought.');
+  if (bu > held + 0.005) return msg('bMsg', `${$('bSeller').value} only has ${n2(held)} bu of ${$('bComm').value} ${$('bYear').value} in storage.`);
+  if (priceTxt && !(Number(priceTxt) >= 0)) return msg('bMsg', 'Price must be a number, or blank.');
+  if (!$('bBy').value.trim()) return msg('bMsg', 'Enter who is recording it.');
+  $('bSave').disabled = true; msg('bMsg', 'Saving…');
+  try {
+    await A.api({ action: 'savePurchase', purchase: { Seller: $('bSeller').value, Commodity: $('bComm').value, CropYear: $('bYear').value, Bushels: bu, PricePerBu: priceTxt === '' ? '' : Number(priceTxt), Date: $('bDate').value, By: $('bBy').value.trim(), Note: $('bNote').value.trim() } });
+    $('buyDlg').close(); A.toast(`Bought ${n2(bu)} bu from ${$('bSeller').value}`);
+    await load(true);
+  } catch (err) { msg('bMsg', err.message); }
+  finally { $('bSave').disabled = false; }
+}
+let unbuyArm = { no: null, at: 0 };
+async function unbuy(btn) {
+  const no = btn.dataset.unbuy;
+  if (unbuyArm.no !== no || Date.now() - unbuyArm.at > 4000) { unbuyArm = { no, at: Date.now() }; btn.textContent = 'Tap again to undo'; btn.classList.add('armed'); return; }
+  unbuyArm = { no: null, at: 0 };
+  try { await A.api({ action: 'voidPurchase', purchaseNo: Number(no), by: (A.S.config && A.S.config.operator) || '' }); A.toast(`Purchase ${no} undone`); await load(true); }
+  catch (err) { A.toast(err.message, 6000); }
 }
 
 // ---------- write-offs ----------
@@ -312,7 +381,7 @@ function adjustments() {
       <button class="ghost" type="button" data-adj="Opening">Opening balance</button><button class="ghost" type="button" data-adj="Measured">Bins measured</button>
       <button class="ghost" type="button" data-adj="BinsEmpty">Bins empty</button><button class="ghost" type="button" data-adj="Other">Other</button></div></div>
     ${as.length ? `<div class="tblwrap"><table><thead><tr><th>#</th><th>Date</th><th>Crop</th><th>Type</th><th class="n">Change bu</th><th class="n">Book before</th><th class="n">After</th><th>By</th><th>Note</th><th></th></tr></thead><tbody>
-    ${as.map(a => `<tr><td>${e(a.AdjNo)}</td><td>${day(a.Date)}</td><td>${e(a.Commodity)} ${e(a.CropYear)}</td><td>${TYPE_NAME[a.Type] || e(a.Type)}</td><td class="n${Number(a.Bushels) < 0 ? ' neg' : ''}">${signed(Number(a.Bushels))}</td><td class="n">${a.BookBefore === '' ? '—' : n2(a.BookBefore)}</td><td class="n">${a.BookAfter === '' ? '—' : n2(a.BookAfter)}</td><td>${e(a.By)}</td><td>${e(a.Note)}</td><td><button class="ghost bad" type="button" data-void="${e(a.AdjNo)}">Undo</button></td></tr>`).join('')}
+    ${as.map(a => `<tr><td>${e(a.AdjNo)}</td><td>${day(a.Date)}</td><td>${e(a.Commodity)} ${e(a.CropYear)}</td><td>${TYPE_NAME[a.Type] || e(a.Type)}${a.Owner ? ' · ' + e(a.Owner) : ''}</td><td class="n${Number(a.Bushels) < 0 ? ' neg' : ''}">${signed(Number(a.Bushels))}</td><td class="n">${a.BookBefore === '' ? '—' : n2(a.BookBefore)}</td><td class="n">${a.BookAfter === '' ? '—' : n2(a.BookAfter)}</td><td>${e(a.By)}</td><td>${e(a.Note)}</td><td><button class="ghost bad" type="button" data-void="${e(a.AdjNo)}">Undo</button></td></tr>`).join('')}
     </tbody></table></div>` : '<div class="empty">No adjustments yet. Start with an opening balance for anything in the bins at cutover.</div>'}
     <p class="hint">Undo keeps the line in the Sheet marked Void, so there's always a record.</p>`;
 }
@@ -335,6 +404,9 @@ function openAdj(type, c, y) {
   }[type];
   $('aBuLbl').textContent = { Opening: 'Bushels in the bins', Measured: 'Measured bushels in the bins', Other: 'Change in bushels (+ or −)' }[type] || '';
   $('aBuBox').hidden = type === 'BinsEmpty';
+  $('aOwnerBox').hidden = type !== 'Opening';
+  const farm = R.operatorName(D());
+  $('aOwner').innerHTML = [farm, ...D().customers.filter(x => x.Type === 'Landlord').map(x => x.Customer).sort((a, b) => a.localeCompare(b))].map(o => `<option>${e(o)}</option>`).join('');
   $('aBu').value = ''; $('aDate').value = today(); $('aNote').value = '';
   $('aBy').value = $('aBy').value || (A.S.config && A.S.config.operator) || '';
   $('aMsg').textContent = '';
@@ -351,18 +423,29 @@ function adjChange() {
 }
 function adjPreview() {
   const { book, change } = adjChange();
+  if (O.adjType === 'BinsEmpty') {
+    const lh = landlordsHolding($('aComm').value, $('aYear').value);
+    $('aMsg').textContent = lh.length ? `Landlords still own ${lh.map(h => `${n2(h.stillTheirs)} bu (${h.landlord})`).join(', ')} of this. Buy it first.` : '';
+  }
   $('aBook').textContent = n2(book);
   $('aResult').innerHTML = change == null ? '' : O.adjType === 'BinsEmpty'
     ? (Math.abs(change) < 0.005 ? 'The book is already at zero. Saving records the close-out.' : `Write off <b class="${change < 0 ? 'neg' : ''}">${signed(change)} bu</b> → book goes to 0`)
     : `Change <b class="${change < 0 ? 'neg' : ''}">${signed(change)} bu</b> → book becomes ${n2(book + change)} bu`;
 }
+function landlordsHolding(c, y) {
+  return R.landlordGrain(D(), { includeTest: testMode() }).filter(h => h.commodity === c && String(h.cropYear) === String(y) && h.stillTheirs > 0.5);
+}
 async function saveAdj() {
   const { book, change } = adjChange();
+  if (O.adjType === 'BinsEmpty') {
+    const lh = landlordsHolding($('aComm').value, $('aYear').value);
+    if (lh.length) return msg('aMsg', `Landlords still own grain in this crop: ${lh.map(h => `${h.landlord} ${n2(h.stillTheirs)} bu`).join(', ')}. Record buying it on the Landlord grain tab first, so the write-off only comes out of your bushels.`);
+  }
   if (change == null) return msg('aMsg', 'Enter the bushels.');
   if (!$('aBy').value.trim()) return msg('aMsg', 'Enter who is making the adjustment.');
   $('aSave').disabled = true; msg('aMsg', 'Saving…');
   try {
-    await A.api({ action: 'saveAdjustment', adjustment: { Type: O.adjType, Commodity: $('aComm').value, CropYear: $('aYear').value, Bushels: change, BookBefore: book, Date: $('aDate').value, By: $('aBy').value.trim(), Note: $('aNote').value.trim() } });
+    await A.api({ action: 'saveAdjustment', adjustment: { Type: O.adjType, Commodity: $('aComm').value, CropYear: $('aYear').value, Bushels: change, BookBefore: book, Date: $('aDate').value, By: $('aBy').value.trim(), Note: $('aNote').value.trim(), Owner: O.adjType === 'Opening' ? $('aOwner').value : '' } });
     $('adjDlg').close(); A.toast(`${TYPE_NAME[O.adjType]} saved for ${$('aComm').value} ${$('aYear').value}`);
     await load(true);
   } catch (err) { msg('aMsg', err.message); }
@@ -381,7 +464,7 @@ async function voidAdj(btn) {
 function printReport() {
   let a = $('printArea');
   if (!a) { a = document.createElement('div'); a.id = 'printArea'; document.body.appendChild(a); }
-  const names = { contracts: 'Contracts', customers: 'Customers', fieldsetup: 'Fields and splits', fields: 'Field report', inventory: 'Inventory and sales position', writeoffs: 'Write-offs', adjustments: 'Inventory adjustments' };
+  const names = { contracts: 'Contracts', customers: 'Customers', fieldsetup: 'Fields and splits', fields: 'Field report', inventory: 'Inventory and sales position', landlord: 'Landlord grain', writeoffs: 'Write-offs', adjustments: 'Inventory adjustments' };
   const body = $('oBody').cloneNode(true);
   body.querySelectorAll('button').forEach(b => b.remove());
   body.querySelectorAll('.ohead h2').forEach(h => h.remove());
@@ -402,6 +485,8 @@ function wire() {
   b.querySelectorAll('[data-open]').forEach(tr => tr.onclick = () => { O.open[tr.dataset.open] = !O.open[tr.dataset.open]; render(); });
   b.querySelectorAll('[data-adj]').forEach(x => x.onclick = () => openAdj(x.dataset.adj, x.dataset.c, x.dataset.y));
   b.querySelectorAll('[data-void]').forEach(x => x.onclick = () => voidAdj(x));
+  b.querySelectorAll('[data-buy]').forEach(x => x.onclick = () => openBuy(x.dataset.s, x.dataset.c, x.dataset.y));
+  b.querySelectorAll('[data-unbuy]').forEach(x => x.onclick = () => unbuy(x));
 }
 function init() {
   A = window.BBG_APP;
@@ -415,6 +500,9 @@ function init() {
   $('aSave').onclick = saveAdj; $('aCancel').onclick = () => $('adjDlg').close();
   $('kSave').onclick = saveCustomer; $('kCancel').onclick = () => $('custDlg').close();
   $('fSave').onclick = saveField; $('fCancel').onclick = () => $('fieldDlg').close();
+  $('bSave').onclick = saveBuy; $('bCancel').onclick = () => $('buyDlg').close();
+  $('bAll').onclick = () => { $('bBu').value = stillTheirs($('bSeller').value, $('bComm').value, $('bYear').value).toFixed(2); buyPreview(); };
+  for (const id of ['bSeller', 'bComm', 'bYear', 'bBu', 'bPrice']) { $(id).addEventListener('input', buyPreview); $(id).addEventListener('change', buyPreview); }
   $('fYear').onchange = loadShares; $('fCopy').onclick = copyLastYear;
   $('fAddOwner').onclick = () => { O.shareRows.push({ Owner: '', SharePct: O.shareRows.length ? Math.max(0, 100 - O.shareRows.reduce((a, r) => a + (Number(r.SharePct) || 0), 0)) : 100 }); drawShares(); };
   for (const id of ['aComm', 'aYear', 'aBu']) { $(id).addEventListener('input', adjPreview); $(id).addEventListener('change', adjPreview); }

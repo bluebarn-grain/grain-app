@@ -75,6 +75,23 @@ const post = b => fetch(BASE + 'api', { method: 'POST', body: JSON.stringify({ k
   await page.waitForFunction(() => /Opening balance/.test(document.getElementById('oBody').innerText));
   await page.screenshot({ path: shots + '/office-inventory.png', fullPage: true });
   console.log('   ', (await page.textContent('.invcard')).replace(/\s+/g, ' '));
+  step('bins empty is blocked while the landlord still owns grain');
+  await page.click('button[data-adj="BinsEmpty"]'); await page.click('#aSave'); console.log('   says:', await page.textContent('#aMsg')); await page.click('#aCancel');
+
+  step('buy part of the landlord grain, with a price');
+  await page.click('[data-tab="landlord"]'); await page.click('#oBody tr button[data-buy]');
+  console.log('   held:', await page.textContent('#bHeld'));
+  await page.fill('#bBu', '600'); await page.fill('#bPrice', '4.15'); await page.fill('#bNote', 'Ck 10422');
+  console.log('   preview:', await page.textContent('#bResult'));
+  await page.click('#bSave'); await page.waitForSelector('#buyDlg', { state: 'hidden' }); await page.waitForFunction(() => /Ck 10422/.test(document.getElementById('oBody').innerText));
+  await page.screenshot({ path: shots + '/office-landlord.png', fullPage: true });
+  console.log('   ', (await page.textContent('#oBody tbody')).replace(/\s+/g, ' '));
+  step('trying to buy more than they have is refused, then buy the rest');
+  await page.click('#oBody tr button[data-buy]'); await page.fill('#bBu', '5000'); await page.click('#bSave'); console.log('   says:', await page.textContent('#bMsg'));
+  await page.click('#bAll'); await page.click('#bSave'); await page.waitForSelector('#buyDlg', { state: 'hidden' });
+  await page.waitForFunction(() => /All bought/.test(document.getElementById('oBody').innerText));
+  await page.click('[data-tab="inventory"]'); await page.screenshot({ path: shots + '/office-inventory2.png', fullPage: true });
+  console.log('   ', (await page.textContent('.invcard')).replace(/\s+/g, ' '));
   await page.click('button[data-adj="BinsEmpty"]'); console.log('   bins empty preview:', await page.textContent('#aResult'));
   await page.fill('#aNote', 'Bins swept'); await page.click('#aSave'); await page.waitForSelector('#adjDlg', { state: 'hidden' });
   await page.waitForFunction(() => /Adjustments/.test(document.getElementById('oBody').innerText));

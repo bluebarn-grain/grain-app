@@ -14,6 +14,7 @@ ok('dry bushels: water shrink to standard, nothing credited under standard', () 
 
 const data = {
   settings: { TypicalLoadBu: 1000 },
+  customers: [{ Customer: 'Roenbaugh Farms', Type: 'Operator' }, { Customer: 'Landlord A', Type: 'Landlord' }, { Customer: 'The Andersons', Type: 'Buyer' }],
   commodities: [{ Commodity: 'Corn', LbPerBu: 56, StdMoisturePct: 15.5 }, { Commodity: 'Sorghum', LbPerBu: 56, StdMoisturePct: 14 }],
   fields: [{ Field: 'Home Place', Acres: 125 }, { Field: 'Share Quarter' }],
   tickets: [
@@ -49,7 +50,27 @@ ok('inventory: opening + dry in − out, open contracts, unsold', () => {
   near(r.inDry, 2470.41); assert.equal(r.out, 1000);
   near(r.onHand, 10000 + 2470.41 - 1000);
   assert.equal(r.openContracts, 4000);   // C1 has 4,000 left; C2 is closed
-  near(r.unsold, 11470.41 - 4000);
+  assert.deepEqual(r.owners.map(o => [o.owner, o.balance]), [['Roenbaugh Farms', 10970.41], ['Landlord A', 500]]);
+  assert.equal(r.landlordHeld, 500);
+  near(r.unsold, 10970.41 - 4000);        // landlord grain isn't the farm's to sell
+});
+
+ok('buying landlord grain moves it to the farm; total on hand unchanged', () => {
+  const d = { ...data, purchases: [{ PurchaseNo: 1, Seller: 'Landlord A', Commodity: 'Corn', CropYear: 2026, Bushels: 300, PricePerBu: 4.1, Status: 'Active' }] };
+  const [r] = R.inventory(d);
+  near(r.onHand, 11470.41);
+  assert.deepEqual(r.owners.map(o => [o.owner, o.balance]), [['Roenbaugh Farms', 11270.41], ['Landlord A', 200]]);
+  const [l] = R.landlordGrain(d);
+  assert.deepEqual([l.landlord, l.delivered, l.bought, l.stillTheirs], ['Landlord A', 500, 300, 200]);
+  const all = { ...d, purchases: d.purchases.concat([{ PurchaseNo: 2, Seller: 'Landlord A', Commodity: 'Corn', CropYear: 2026, Bushels: 200, Status: 'Active' }]) };
+  assert.equal(R.inventory(all)[0].landlordHeld, 0);
+  assert.equal(R.landlordGrain(all)[0].stillTheirs, 0);
+});
+
+ok('opening balance can belong to a landlord', () => {
+  const d = { ...data, adjustments: data.adjustments.concat([{ AdjNo: 3, Type: 'Opening', Owner: 'Landlord A', Commodity: 'Corn', CropYear: 2026, Bushels: 1000, Status: 'Active' }]) };
+  const [r] = R.inventory(d);
+  assert.equal(r.owners.find(o => o.owner === 'Landlord A').balance, 1500);
 });
 
 ok('inventory: a contract with less than half a load left counts as filled', () => {
@@ -85,6 +106,17 @@ ok('contracts: add, refuse duplicates, edit, close', () => {
   const c = d.contracts.find(x => x.ContractNo === 'A-100');
   assert.equal(c.Bushels, 30000); assert.equal(c.Status, 'Closed');
   assert.equal(call({ action: 'lists' }).contracts.some(x => x.ContractNo === 'A-100'), false);  // closed: not at the scale
+});
+ok('purchases: save with price, landlord only, void', () => {
+  call({ action: 'saveCustomer', isNew: true, customer: { Customer: 'Jones Ag', Type: 'Landlord' } });
+  let j = call({ action: 'savePurchase', purchase: { Seller: 'Jones Ag', Commodity: 'Corn', CropYear: 2026, Bushels: 1250.5, PricePerBu: 4.1525, By: 'Chris', Date: '2026-11-11' } });
+  assert.ok(j.ok, j.error);
+  assert.match(call({ action: 'savePurchase', purchase: { Seller: 'The Andersons', Commodity: 'Corn', CropYear: 2026, Bushels: 5, By: 'Chris' } }).error, /not a landlord/);
+  assert.match(call({ action: 'savePurchase', purchase: { Seller: 'Jones Ag', Commodity: 'Corn', CropYear: 2026, Bushels: 0, By: 'Chris' } }).error, /more than 0/);
+  let p = call({ action: 'officeData' }).purchases;
+  assert.equal(p.length, 1); assert.equal(p[0].Amount, 5192.70);
+  assert.ok(call({ action: 'voidPurchase', purchaseNo: 1, by: 'Chris' }).ok);
+  assert.equal(call({ action: 'officeData' }).purchases.length, 0);
 });
 ok('adjustments: save, require a name, void', () => {
   let j = call({ action: 'saveAdjustment', adjustment: { Type: 'Opening', Commodity: 'Corn', CropYear: 2026, Bushels: 5000, By: 'Chris' } });

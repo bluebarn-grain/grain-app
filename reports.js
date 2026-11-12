@@ -75,24 +75,47 @@
     return a;
   }
 
+  // Who owns what's in the bins. Each load's dry bushels go to its owners by the split.
+  // Buying landlord grain moves bushels from the landlord to the farm. Sales, shrink and
+  // adjustments are the farm's. Landlords' stored grain is theirs until bought.
+  function operatorName(data) {
+    const op = (data.customers || []).find(c => c.Type === 'Operator');
+    return op ? op.Customer : 'Farm';
+  }
+  function custType(data) { const t = {}; (data.customers || []).forEach(c => { t[c.Customer] = c.Type; }); return t; }
+
   // Book inventory and sales position per commodity and crop year.
   // On hand = opening + dry bushels in − bushels out ± adjustments.
   // Open contracts = what's left to ship on contracts that aren't closed or filled.
   function inventory(data, opt = {}) {
     const { tickets, dry } = prep(data, { ...opt, cropYear: '', commodity: '' });
     const halfLoad = (num(data.settings && data.settings.TypicalLoadBu) || 1000) / 2;
+    const farm = operatorName(data), types = custType(data);
+    const splits = {};
+    (data.splits || []).forEach(x => { (splits[String(x.TicketNo)] = splits[String(x.TicketNo)] || []).push(x); });
     const rows = {};
-    const row = (c, y) => rows[key(c, y)] = rows[key(c, y)] || { commodity: c, cropYear: y, opening: 0, inDry: 0, inWet: 0, out: 0, adjust: 0, writeOff: 0, loadsIn: 0, loadsOut: 0, openContracts: 0, contracts: [] };
+    const row = (c, y) => rows[key(c, y)] = rows[key(c, y)] || { commodity: c, cropYear: y, opening: 0, inDry: 0, inWet: 0, out: 0, adjust: 0, writeOff: 0, purchased: 0, loadsIn: 0, loadsOut: 0, openContracts: 0, contracts: [], own: {} };
+    const own = (r, who) => r.own[who] = r.own[who] || { owner: who, type: who === farm ? 'Operator' : (types[who] || (who === 'UNASSIGNED' ? 'Unassigned' : 'Landlord')), opening: 0, inDry: 0, bought: 0, sold: 0, balance: 0 };
     tickets.forEach(t => {
       const r = row(t.Commodity, t.CropYear);
-      if (t.Direction === 'IN') { r.inDry += dry(t); r.inWet += num(t.WetBu); r.loadsIn++; }
-      else if (t.Direction === 'OUT') { r.out += num(t.WetBu); r.loadsOut++; }
+      if (t.Direction === 'IN') {
+        const d = dry(t), wet = num(t.WetBu);
+        r.inDry += d; r.inWet += wet; r.loadsIn++;
+        const sp = splits[String(t.TicketNo)] || [{ Owner: 'UNASSIGNED', SharePct: 100, WetBu: wet }];
+        sp.forEach(x => { const share = has(x.WetBu) ? num(x.WetBu) : wet * num(x.SharePct) / 100; own(r, x.Owner).inDry += wet ? d * share / wet : 0; });
+      } else if (t.Direction === 'OUT') { r.out += num(t.WetBu); r.loadsOut++; }
     });
     (data.adjustments || []).forEach(a => {
       if (String(a.Status) === 'Void') return;
       const r = row(a.Commodity, a.CropYear);
-      if (a.Type === 'Opening') r.opening += num(a.Bushels);
+      if (a.Type === 'Opening') { r.opening += num(a.Bushels); own(r, a.Owner || farm).opening += num(a.Bushels); }
       else { r.adjust += num(a.Bushels); if (a.Type === 'BinsEmpty') r.writeOff += num(a.Bushels); }
+    });
+    (data.purchases || []).forEach(p => {
+      if (String(p.Status) === 'Void') return;
+      const r = row(p.Commodity, p.CropYear);
+      r.purchased += num(p.Bushels);
+      own(r, p.Seller).sold += num(p.Bushels); own(r, farm).bought += num(p.Bushels);
     });
     const applied = appliedByContract(data, opt);
     (data.contracts || []).forEach(c => {
@@ -105,10 +128,31 @@
     });
     return Object.values(rows).map(r => {
       const onHand = r.opening + r.inDry - r.out + r.adjust;
-      return { ...r, opening: r2(r.opening), inDry: r2(r.inDry), inWet: r2(r.inWet), out: r2(r.out), adjust: r2(r.adjust), writeOff: r2(r.writeOff),
-        onHand: r2(onHand), openContracts: r2(r.openContracts), unsold: r2(onHand - r.openContracts) };
+      const f = own(r, farm);
+      Object.values(r.own).forEach(o => { o.balance = r2(o.opening) + r2(o.inDry) + r2(o.bought) - r2(o.sold); });  // rounded the way they're shown, so "buy all" leaves exactly 0
+      f.balance += -r.out + r.adjust;   // sales, shrink and adjustments are the farm's
+      const owners = Object.values(r.own).map(o => ({ owner: o.owner, type: o.type, opening: r2(o.opening), inDry: r2(o.inDry), bought: r2(o.bought), sold: r2(o.sold), balance: r2(o.balance) }))
+        .filter(o => o.type === 'Operator' || Math.abs(o.balance) >= 0.005 || o.inDry || o.sold)
+        .sort((a, b) => (a.type !== 'Operator') - (b.type !== 'Operator') || b.balance - a.balance);
+      const landlordHeld = owners.filter(o => o.type !== 'Operator').reduce((a, o) => a + Math.max(0, o.balance), 0);
+      // The farm's share is whatever isn't someone else's, so the owners always add back to on hand exactly.
+      const others = owners.filter(o => o.type !== 'Operator').reduce((a, o) => a + o.balance, 0);
+      const fo = owners.find(o => o.type === 'Operator'); fo.balance = r2(r2(onHand) - r2(others));
+      const farmOwned = fo.balance;
+      return { commodity: r.commodity, cropYear: r.cropYear, opening: r2(r.opening), inDry: r2(r.inDry), inWet: r2(r.inWet), out: r2(r.out), adjust: r2(r.adjust), writeOff: r2(r.writeOff),
+        purchased: r2(r.purchased), loadsIn: r.loadsIn, loadsOut: r.loadsOut, contracts: r.contracts,
+        onHand: r2(onHand), owners, landlordHeld: r2(landlordHeld), farmOwned: r2(farmOwned),
+        openContracts: r2(r.openContracts), unsold: r2(farmOwned - r.openContracts) };
     }).filter(r => !opt.cropYear || String(r.cropYear) === String(opt.cropYear))
       .sort((a, b) => String(b.cropYear).localeCompare(String(a.cropYear)) || String(a.commodity).localeCompare(String(b.commodity)));
+  }
+
+  // Each landlord's grain per commodity and crop year: delivered, bought by the farm, still theirs in storage.
+  function landlordGrain(data, opt = {}) {
+    const out = [];
+    inventory(data, opt).forEach(r => r.owners.filter(o => o.type !== 'Operator').forEach(o =>
+      out.push({ landlord: o.owner, type: o.type, commodity: r.commodity, cropYear: r.cropYear, delivered: r2(o.inDry + o.opening), bought: o.sold, stillTheirs: o.balance })));
+    return out.sort((a, b) => b.stillTheirs - a.stillTheirs || String(a.landlord).localeCompare(String(b.landlord)));
   }
 
   // Shrink written off when the bins were emptied, per commodity and crop year.
@@ -123,7 +167,7 @@
       });
   }
 
-  const api = { shrinkFactor, fieldReport, inventory, writeOffs, appliedByContract };
+  const api = { shrinkFactor, fieldReport, inventory, landlordGrain, writeOffs, appliedByContract, operatorName };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BBR = api;
 })(typeof window !== 'undefined' ? window : globalThis);
