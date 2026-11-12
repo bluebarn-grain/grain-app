@@ -22,22 +22,31 @@ function makeSheet(name, rows) {
 }
 function makeSS(name, tabs) {
   const sheets = {}; for (const [k, v] of Object.entries(tabs)) sheets[k] = makeSheet(k, v);
-  return { getName: () => name, getSheetByName: n => sheets[n] || null, sheets };
+  return { getName: () => name, getSheetByName: n => sheets[n] || null, insertSheet: n => (sheets[n] = makeSheet(n, [])), sheets };
 }
 function loadBackend(ss, props) {
-  const store = { ...props };
+  const store = { ...props }, sent = [];
   const ctx = {
     PropertiesService: { getScriptProperties: () => ({ getProperty: k => store[k] ?? null, setProperty: (k, v) => { store[k] = v; } }) },
     SpreadsheetApp: { openById: () => ss },
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: s => ({ text: s, setMimeType() { return this; } }) },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
-    Utilities: { getUuid: () => 'test-key' },
+    Utilities: {
+      getUuid: () => 'test-key',
+      newBlob: (data, type, name) => ({ data, type, name }),
+      formatDate: (d, tz, pat) => {
+        const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', weekday: 'long', month2: undefined }).formatToParts(d).map(x => [x.type, x.value]));
+        const mon = new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'short' }).format(d);
+        return pat.replace('yyyy', p.year).replace('EEEE', p.weekday).replace('MMM', mon).replace('MM', p.month).replace('dd', p.day).replace(/\bd\b/, String(Number(p.day))).replace('HH', p.hour).replace('mm', p.minute);
+      }
+    },
+    MailApp: { sendEmail: m => sent.push(m) },
     Logger: { log: () => {} },
     console, Date, JSON, Math, Number, String, Array, Object
   };
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'backend', 'Code.gs'), 'utf8'), ctx);
-  return { ctx, call: body => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).text) };
+  return { ctx, sent, call: body => JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(body) } }).text) };
 }
 function testSheet() {
   return makeSS('Blue Barn Grain Sheet – TEST', {

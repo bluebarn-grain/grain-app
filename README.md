@@ -34,6 +34,17 @@ Open the app, then **Settings**: paste the Web app URL and the key, click **Test
 ### 4. Test
 Turn on **Simulator** in Settings to test anywhere, including an iPad. On the scale PC, turn the simulator off and use **Connect serial port** once for each adapter. The app works out which port is the scale and which is the moisture tester from what they send.
 
+### 5. Nightly buyer emails (once)
+Every night at 7 pm, each buyer that shipped grain gets one email from BBL&C: a block per contract (loads and bushels today, shipped to date, remaining, or "complete"), the ticket list, and a CSV of the tickets. Nights with no shipments send nothing. Test tickets are never sent.
+1. **Customers tab → Email:** put each buyer's address. Several addresses can go in one cell, separated by commas. To send a contract to someone else, add an **Email** column on the **Contracts** tab and fill it on that row.
+2. **Settings tab:** add a row **OfficeEmail** with your address. Replies go there, and so does a note if a ticket has no contract or a buyer has no email.
+3. In the script editor, paste the new `backend/Code.gs`, save, pick **setupNightlyEmails**, click **Run**, and approve the new email permission. This makes the 7 pm trigger and a **Banter** tab.
+4. To see tonight's emails without sending them to buyers, run **previewNightlyEmails**. Everything goes to OfficeEmail only.
+
+**Banter tab:** the jokes rotate so a buyer doesn't see the same one twice in a row. Types are Opener, Payment, SignOff and Complete (used when a contract fills). Add lines, edit them, or set Active to FALSE to retire one.
+
+**Tickets are never missed or sent twice.** Each email covers every outbound ticket not yet emailed, so a truck weighed after 7 pm, or a ticket put on a contract later, goes out the next night. The **EmailLog** tab lists what was sent.
+
 ## Scale PC tips
 - Use **Chrome** or **Edge**. Serial ports don't work in Safari or Firefox.
 - Install it as an app: Chrome menu → **Cast, save and share → Install page as app**.
@@ -46,6 +57,7 @@ In the backend, paste the real Sheet ID into `switchToLive()` and run it once. I
 ## Tests
 ```
 node test/unit.test.js          # parsers and backend logic
+node test/emails.test.js        # nightly buyer emails
 node test/server.js &           # fake backend on a mock Sheet
 node test/e2e.js shot.png       # browser run-through on the simulator
 ```

@@ -194,3 +194,196 @@ function bumpSetting_(ss, key, n) {
   }
   sh.appendRow([key, n, 'Kept up to date by the scale app']);
 }
+
+/* ======================================================================
+ * Nightly shipment emails to buyers
+ *
+ * Every night at 7 pm, each buyer that shipped grain that day gets one email:
+ * a block per contract (today, to date, remaining) plus the day's tickets, with
+ * a CSV attached. Banter lines rotate from the "Banter" tab so they don't repeat.
+ *
+ * Who gets it: the Email column on the Customers tab (several addresses can be
+ * separated by commas). An Email on a Contracts row overrides that for the contract.
+ * Problems (no email for a buyer, tickets with no contract) go to Settings → OfficeEmail.
+ *
+ * Setup: run setupNightlyEmails() once from the editor. Run previewNightlyEmails()
+ * any time to send today's emails to OfficeEmail only (test tickets included).
+ * ==================================================================== */
+
+var SIGNATURE = ['BBL&C', '2949 S Road · Haviland, KS 67059 · 620-995-4245'];
+var DEFAULT_BANTER = [
+  ['Opener', 'Good news: you hauled grain out of Blue Barn today!'],
+  ['Opener', 'The trucks rolled, the scale worked, and the grain is yours.'],
+  ['Opener', 'Another productive day of moving our grain into your bins.'],
+  ['Opener', 'Your trucks were here so often today we started naming them.'],
+  ['Opener', 'The scale got a workout today, courtesy of your trucks.'],
+  ['Payment', 'We look forward to payment. We accept cash. And, well… cash.'],
+  ['Payment', 'Payment terms: soon. Preferred method: also soon.'],
+  ['Payment', 'Our accountant asked us to mention payment. Consider it mentioned.'],
+  ['Payment', 'We looked into taking crypto and decided that was a bad plan. Checks are fine.'],
+  ['Payment', 'Grain left, money hasn\'t arrived yet. We trust this will sort itself out.'],
+  ['SignOff', 'See you on the next load,'],
+  ['SignOff', 'Keep \'em coming,'],
+  ['SignOff', 'Until tomorrow\'s trucks,'],
+  ['Complete', 'That\'s a wrap on this contract. Every last bushel is yours now.'],
+  ['Complete', 'Contract complete. The bins are lighter and our hopes for prompt payment are higher.'],
+  ['Complete', 'Done and done. It was a pleasure watching your trucks leave full.'],
+  ['Complete', 'Last load is out. Please direct all remaining enthusiasm toward the check.'],
+  ['Complete', 'Contract filled. If you\'d like to buy more, we know a farm.']
+];
+
+/** Run once from the editor: makes the 7 pm trigger and the Banter tab. */
+function setupNightlyEmails() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'sendNightlyEmails') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('sendNightlyEmails').timeBased().atHour(19).nearMinute(0).everyDays(1).inTimezone('America/Chicago').create();
+  var ss = SpreadsheetApp.openById(PROPS.getProperty('SHEET_ID'));
+  banter_(ss);
+  Logger.log('Nightly buyer emails will send at 7 pm Central. Put buyer emails on the Customers tab and your address in Settings → OfficeEmail.');
+}
+
+/** Trigger entry point. */
+function sendNightlyEmails() {
+  var ss = SpreadsheetApp.openById(PROPS.getProperty('SHEET_ID'));
+  return nightlyEmails_(ss, new Date(), false);
+}
+
+/** Sends today's emails to OfficeEmail only, test tickets included. Nothing is logged as sent. */
+function previewNightlyEmails() {
+  var ss = SpreadsheetApp.openById(PROPS.getProperty('SHEET_ID'));
+  return nightlyEmails_(ss, new Date(), true);
+}
+
+function isTrue_(v) { return v === true || String(v).toUpperCase() === 'TRUE'; }
+var TZ = 'America/Chicago';
+function day_(d) { return Utilities.formatDate(new Date(d), TZ, 'yyyy-MM-dd'); }
+function n2_(x) { return Number(x || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function n0_(x) { return Math.round(Number(x || 0)).toLocaleString('en-US'); }
+function esc_(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+/** Banter lines by type. Creates the tab with the starter lines if it's missing. */
+function banter_(ss) {
+  var sh = ss.getSheetByName('Banter');
+  if (!sh) {
+    sh = ss.insertSheet('Banter');
+    sh.getRange(1, 1, 1, 3).setValues([['Type', 'Line', 'Active']]).setFontWeight('bold');
+    sh.getRange(2, 1, DEFAULT_BANTER.length, 3).setValues(DEFAULT_BANTER.map(function (r) { return [r[0], r[1], true]; }));
+  }
+  var by = { Opener: [], Payment: [], SignOff: [], Complete: [] };
+  rows_(sh).forEach(function (r) { if (r.Line && isActive_(r.Active) && by[r.Type]) by[r.Type].push(String(r.Line)); });
+  DEFAULT_BANTER.forEach(function (r) { if (!by[r[0]].length) by[r[0]].push(r[1]); });
+  return by;
+}
+/** Same line all day, next one tomorrow; different buyers start at different spots. */
+function pick_(list, dayNo, salt) {
+  var h = 0; String(salt || '').split('').forEach(function (c) { h = (h * 31 + c.charCodeAt(0)) % 9973; });
+  return list[(dayNo + h) % list.length];
+}
+
+function nightlyEmails_(ss, now, preview) {
+  var today = day_(now), dayNo = Math.floor(new Date(today + 'T12:00:00Z').getTime() / 86400000);
+  var settings = {}; rows_(tab_(ss, 'Settings')).forEach(function (r) { if (r.Key) settings[r.Key] = r.Value; });
+  var office = String(settings.OfficeEmail || '').trim();
+  var emails = {}; rows_(tab_(ss, 'Customers')).forEach(function (c) { if (c.Customer) emails[c.Customer] = String(c.Email || '').trim(); });
+  var contracts = {}; rows_(tab_(ss, 'Contracts')).forEach(function (c) { if (c.ContractNo) contracts[String(c.ContractNo)] = c; });
+  var banter = banter_(ss);
+
+  var out = rows_(tab_(ss, 'Tickets')).filter(function (t) {
+    return t.Direction === 'OUT' && t.Status === 'Closed' && (preview || !isTrue_(t.TestTicket));
+  });
+  var toDate = {}, loadsToDate = {};
+  out.forEach(function (t) {
+    var c = String(t.ContractNo || '');
+    if (!c || c === 'TBD') return;
+    toDate[c] = (toDate[c] || 0) + Number(t.WetBu || 0);
+    loadsToDate[c] = (loadsToDate[c] || 0) + 1;
+  });
+  // Every closed outbound ticket since cutover that hasn't been emailed yet, so a truck
+  // weighed after 7 pm or a ticket assigned to a contract later still goes out next time.
+  var sentLog = ss.getSheetByName('EmailLog');
+  if (!sentLog && !preview) { sentLog = ss.insertSheet('EmailLog'); sentLog.appendRow(['Date', 'Buyer', 'To', 'Contracts', 'Tickets', 'SentAt']); }
+  var emailed = {};
+  if (sentLog) rows_(sentLog).forEach(function (r) { String(r.Tickets || '').split(/[ ,]+/).forEach(function (n) { if (n) emailed[n] = true; }); });
+  var cutover = settings.CutoverDate ? day_(settings.CutoverDate) : '';
+  var todays = out.filter(function (t) {
+    if (!t.DateTime) return false;
+    if (preview) return day_(t.DateTime) === today;
+    return !emailed[String(t.TicketNo)] && (!cutover || day_(t.DateTime) >= cutover) && day_(t.DateTime) <= today;
+  });
+
+  var problems = [], byBuyer = {};
+  todays.forEach(function (t) {
+    var c = String(t.ContractNo || '');
+    if (!c || c === 'TBD' || !contracts[c]) { problems.push('Ticket ' + t.TicketNo + ' (' + (t.Buyer || 'no buyer') + ') has no contract, so it was held back. Put it on a contract and it goes out with the next night\'s email.'); return; }
+    var buyer = contracts[c].Buyer || t.Buyer;
+    var to = String(contracts[c].Email || '').trim() || emails[buyer] || '';
+    var key = buyer + '|' + to;
+    (byBuyer[key] = byBuyer[key] || { buyer: buyer, to: to, contracts: {} });
+    (byBuyer[key].contracts[c] = byBuyer[key].contracts[c] || []).push(t);
+  });
+
+  var sent = [];
+  Object.keys(byBuyer).forEach(function (key) {
+    var g = byBuyer[key];
+    if (!g.to) { problems.push(g.buyer + ' shipped today but has no email on the Customers tab. Nothing was sent to them.'); return; }
+    var msg = buildEmail_(g, contracts, toDate, loadsToDate, banter, dayNo, now);
+    var to = preview ? office : g.to;
+    if (!to) return;
+    MailApp.sendEmail({
+      to: to, name: 'BBL&C', replyTo: office || undefined,
+      subject: (preview ? '[PREVIEW for ' + g.to + '] ' : '') + msg.subject,
+      body: msg.text, htmlBody: msg.html,
+      attachments: [Utilities.newBlob(msg.csv, 'text/csv', 'BBLC tickets ' + today + ' ' + g.buyer + '.csv')]
+    });
+    if (!preview) sentLog.appendRow([today, g.buyer, g.to, Object.keys(g.contracts).join(', '), msg.ticketNos.join(', '), new Date()]);
+    sent.push({ buyer: g.buyer, to: to, subject: msg.subject });
+  });
+
+  if (problems.length && office) {
+    MailApp.sendEmail({ to: office, name: 'BBL&C scale', subject: (preview ? '[PREVIEW] ' : '') + 'Buyer emails for ' + today + ': ' + problems.length + ' thing(s) to fix', body: problems.join('\n\n') });
+  }
+  return { sent: sent, problems: problems };
+}
+
+function buildEmail_(g, contracts, toDate, loadsToDate, banter, dayNo, now) {
+  var dateStr = Utilities.formatDate(now, TZ, 'EEEE, MMM d');
+  var blocks = [], rows = [], loadsToday = 0, completed = [];
+  Object.keys(g.contracts).sort().forEach(function (c) {
+    var k = contracts[c], ts = g.contracts[c].sort(function (a, b) { return Number(a.TicketNo) - Number(b.TicketNo); });
+    var buToday = ts.reduce(function (a, t) { return a + Number(t.WetBu || 0); }, 0);
+    var total = Number(k.Bushels || 0), done = toDate[c] || 0, left = total - done;
+    var avg = loadsToDate[c] ? done / loadsToDate[c] : 0;
+    var lines = ['Contract ' + c + ' — ' + (k.Commodity || ts[0].Commodity || ''),
+      'Today: ' + ts.length + ' load' + (ts.length === 1 ? '' : 's') + ', ' + n2_(buToday) + ' bu',
+      'Shipped to date: ' + loadsToDate[c] + ' loads, ' + n2_(done) + ' bu of ' + n0_(total) + ' bu'];
+    var complete = total > 0 && left <= 0;
+    if (!total) lines.push('Remaining: contract bushels not set');
+    else if (complete) { lines.push(left < 0 ? 'Complete — over by ' + n2_(-left) + ' bu' : 'Complete'); completed.push(c); lines.push(pick_(banter.Complete, dayNo, c)); }
+    else lines.push('Remaining: ' + n2_(left) + ' bu' + (avg ? ', about ' + Math.ceil(left / avg) + ' more load' + (Math.ceil(left / avg) === 1 ? '' : 's') + ' at the average so far' : ''));
+    blocks.push(lines);
+    loadsToday += ts.length;
+    ts.forEach(function (t) {
+      rows.push([t.TicketNo, Utilities.formatDate(new Date(t.DateTime), TZ, 'MM/dd/yyyy HH:mm'), c, t.Commodity, t.Truck, t.BOLNo, t.GrossLb, t.TareLb, t.NetLb, Number(t.WetBu || 0).toFixed(2)]);
+    });
+  });
+
+  var subject = 'BBL&C shipped ' + loadsToday + ' load' + (loadsToday === 1 ? '' : 's') + ' today — ' +
+    (blocks.length === 1 ? 'Contract ' + Object.keys(g.contracts)[0] + ', ' + (contracts[Object.keys(g.contracts)[0]].Commodity || '') : blocks.length + ' contracts') +
+    (completed.length ? ' (complete!)' : '');
+  var opener = pick_(banter.Opener, dayNo, g.buyer), pay = pick_(banter.Payment, dayNo, g.buyer + 'p'), signoff = completed.length === blocks.length ? 'Thanks for the business,' : pick_(banter.SignOff, dayNo, g.buyer + 's');
+  var greet = 'Hey ' + String(g.buyer).replace(/^the\s+/i, '') + ' crew,';
+  var middle = 'The ticket list (' + dateStr + ') is attached for your diligent and professional staff to review. All weights are from the Blue Barn scale.';
+
+  var text = [greet, '', opener, ''].concat(blocks.map(function (b) { return b.join('\n'); }).join('\n\n'), '', middle, '', pay, '', signoff, '', SIGNATURE.join('\n')).join('\n');
+
+  var head = ['Ticket', 'Date/Time', 'Contract', 'Commodity', 'Truck', 'BOL', 'Gross lb', 'Tare lb', 'Net lb', 'Bushels'];
+  var td = 'style="padding:4px 8px;border-bottom:1px solid #ddd;text-align:right"';
+  var table = '<table style="border-collapse:collapse;font-size:13px"><tr>' + head.map(function (h) { return '<th ' + td.replace('1px solid #ddd', '2px solid #333') + '>' + h + '</th>'; }).join('') + '</tr>' +
+    rows.map(function (r) { return '<tr>' + r.map(function (v, i) { return '<td ' + td + '>' + esc_(i >= 6 && i <= 8 ? n0_(v) : v) + '</td>'; }).join('') + '</tr>'; }).join('') + '</table>';
+  var html = '<div style="font-family:Arial,sans-serif;font-size:15px;color:#222;line-height:1.45">' +
+    '<p>' + esc_(greet) + '</p><p>' + esc_(opener) + '</p>' +
+    blocks.map(function (b) { return '<p><b>' + esc_(b[0]) + '</b><br>' + b.slice(1).map(esc_).join('<br>') + '</p>'; }).join('') +
+    '<p>' + esc_(middle) + '</p>' + table + '<p>' + esc_(pay) + '</p><p>' + esc_(signoff) + '</p><p>' + SIGNATURE.map(esc_).join('<br>') + '</p></div>';
+
+  var csv = [head].concat(rows).map(function (r) { return r.map(function (v) { v = String(v == null ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(','); }).join('\n');
+  return { subject: subject, text: text, html: html, csv: csv, ticketNos: rows.map(function (r) { return r[0]; }) };
+}
