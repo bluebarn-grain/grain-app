@@ -71,6 +71,12 @@ ok('TEST sheet: test tickets count, emails go only to OfficeEmail, and are logge
   assert.match(b4.sent[0].subject, /^\[TEST for real-buyer@andersons.example\] BBL&C shipped 2 loads today/);
   b4.sent.length = 0; b4.ctx.nightlyEmails_(ss4, new Date('2026-11-13T01:00:00Z'), false, true);
   assert.equal(b4.sent.length, 0);   // already sent, not repeated
+  // TestSendToBuyers: sample goes to the buyer, office copied, [SAMPLE] in the subject
+  T4.Settings.data.push(['TestSendToBuyers', true, '']);
+  b4.call({ action: 'saveTickets', key: 'k', tickets: [out(900203, '2026-11-13T18:00:00Z', 1000, { test: true })] });
+  b4.ctx.nightlyEmails_(ss4, new Date('2026-11-14T01:00:00Z'), false, true);
+  assert.equal(b4.sent[0].to, 'real-buyer@andersons.example'); assert.equal(b4.sent[0].cc, 'chris@example.com');
+  assert.match(b4.sent[0].subject, /^\[SAMPLE\] BBL&C shipped 1 load today/);
   // and the live behavior still skips test tickets
   const ss5 = testSheet(); ss5.sheets.Customers.data[2][5] = 'b@x.example'; const b5 = loadBackend(ss5, { SHEET_ID: 'x', API_KEY: 'k' });
   b5.call({ action: 'saveTickets', key: 'k', tickets: [out(900301, '2026-11-12T18:00:00Z', 1000, { test: true })] });

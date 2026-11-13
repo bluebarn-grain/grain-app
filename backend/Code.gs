@@ -413,16 +413,19 @@ function nightlyEmails_(ss, now, preview, testEnv) {
     });
   });
 
+  // TEST sheet only: Settings → TestSendToBuyers = TRUE sends the sample emails to the buyers
+  // themselves (subject marked [SAMPLE], OfficeEmail copied) so a buyer can see what they'll get.
+  var toBuyers = testEnv && isTrue_(settings.TestSendToBuyers);
   var sent = [];
   Object.keys(byBuyer).forEach(function (key) {
     var g = byBuyer[key];
-    if (!g.to && !testEnv) { problems.push(g.buyer + ' shipped today but has no email on the Customers tab. Nothing was sent to them.'); return; }
+    if (!g.to && (!testEnv || toBuyers)) { problems.push(g.buyer + ' shipped today but has no email on the Customers tab. Nothing was sent to them.'); return; }
     var msg = buildEmail_(g, contracts, toDate, loadsToDate, truckBu, banter, dayNo, now, halfLoad);
-    var to = preview || testEnv ? office : g.to;
+    var to = preview || (testEnv && !toBuyers) ? office : g.to;
     if (!to) return;
     MailApp.sendEmail({
-      to: to, name: 'BBL&C', replyTo: office || undefined,
-      subject: (preview ? '[PREVIEW for ' + g.to + '] ' : testEnv ? '[TEST for ' + (g.to || g.buyer) + '] ' : '') + msg.subject,
+      to: to, name: 'BBL&C', replyTo: office || undefined, cc: toBuyers && office ? office : undefined,
+      subject: (preview ? '[PREVIEW for ' + g.to + '] ' : toBuyers ? '[SAMPLE] ' : testEnv ? '[TEST for ' + (g.to || g.buyer) + '] ' : '') + msg.subject,
       body: msg.text, htmlBody: msg.html,
       attachments: [Utilities.newBlob(msg.csv, 'text/csv', 'BBLC tickets ' + today + ' ' + g.buyer + '.csv')]
     });
