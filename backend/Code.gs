@@ -529,6 +529,7 @@ function officeData_(ss) {
     fields: rows_(tab_(ss, 'Fields')).filter(function (f) { return f.Field; }),
     shares: rows_(tab_(ss, 'Shares')).filter(function (r) { return r.Field && r.Owner; }),
     editLog: opt('EditLog').slice(-500),
+    backupLog: opt('BackupLog').slice(-5),
     commodities: rows_(tab_(ss, 'Commodities')).filter(function (c) { return c.Commodity; }),
     settings: settings,
     at: new Date().toISOString()
@@ -925,4 +926,82 @@ function saveCommodity_(ss, c, isNew) {
   var lock = LockService.getScriptLock(); lock.waitLock(20000);
   try { return { commodity: upsert_(ss, 'Commodities', COMMODITY_COLUMNS, 'Commodity', rec, isNew, 'Commodity') }; }
   finally { lock.releaseLock(); }
+}
+
+
+/* ======================================================================
+ * Backups
+ *
+ * Every night at 11 pm a dated copy of the whole Sheet goes into a Drive folder
+ * "Grain Backups" (the last 30 days are kept, plus the copy from the 1st of every
+ * month forever). Every Sunday an Excel copy of every tab is emailed to
+ * Settings → BackupEmail (or OfficeEmail), so a copy lives outside Google too.
+ * The folder is shared with Settings → BackupShareWith. BackupLog tab shows each run.
+ *
+ * Setup: run setupBackups() once and approve Drive access. It also runs one
+ * backup and sends one Excel email right away so you can see they work.
+ * ==================================================================== */
+var BACKUP_FOLDER = 'Grain Backups';
+var BACKUP_PREFIX = 'Blue Barn Grain backup ';
+
+function setupBackups() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'nightlyBackup') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('nightlyBackup').timeBased().atHour(23).nearMinute(0).everyDays(1).inTimezone('America/Chicago').create();
+  var r = nightlyBackup(true);
+  Logger.log('Backups are on: a copy of the Sheet every night at 11 pm into Drive → ' + BACKUP_FOLDER + ', and an Excel copy emailed every Sunday. ' +
+    'Just made "' + r.copy + '"' + (r.emailedTo ? ' and emailed the Excel copy to ' + r.emailedTo : ' (no email: add BackupEmail or OfficeEmail in Settings)') + '.');
+}
+
+/** Trigger entry point (also run by setupBackups with sendNow = true). */
+function nightlyBackup(sendNow) {
+  var id = PROPS.getProperty('SHEET_ID'), ss = SpreadsheetApp.openById(id), live = id !== TEST_SHEET_ID;
+  var settings = {}; rows_(tab_(ss, 'Settings')).forEach(function (r) { if (r.Key) settings[r.Key] = r.Value; });
+  var now = new Date(), stamp = Utilities.formatDate(now, TZ, 'yyyy-MM-dd');
+  var folder = backupFolder_(settings);
+  var name = BACKUP_PREFIX + stamp + (live ? '' : ' (TEST)');
+  if (!folder.getFilesByName(name).hasNext()) DriveApp.getFileById(id).makeCopy(name, folder);
+  var trashed = pruneBackups_(folder, stamp);
+  var to = String(settings.BackupEmail || settings.OfficeEmail || '').trim(), emailed = '';
+  var sunday = Utilities.formatDate(now, TZ, 'u') === '7';
+  if (to && (sunday || sendNow === true)) { emailExcel_(id, to, stamp, live); emailed = to; }
+  var log = ss.getSheetByName('BackupLog'); if (!log) { log = ss.insertSheet('BackupLog'); log.appendRow(['At', 'Copy', 'EmailedTo', 'OldCopiesRemoved']); }
+  log.appendRow([now, name, emailed, trashed]);
+  return { copy: name, emailedTo: emailed, trashed: trashed };
+}
+
+function backupFolder_(settings) {
+  var it = DriveApp.getFoldersByName(BACKUP_FOLDER), f = it.hasNext() ? it.next() : DriveApp.createFolder(BACKUP_FOLDER);
+  String(settings.BackupShareWith || '').split(/[,\s]+/).filter(Boolean).forEach(function (who) {
+    try { if (f.getEditors().map(function (u) { return u.getEmail(); }).indexOf(who) < 0) f.addViewer(who); } catch (e) { /* sharing is best-effort */ }
+  });
+  return f;
+}
+
+/** Which backup copies to remove: older than 30 days, except the copy from the 1st of each month. */
+function backupsToRemove_(names, todayStamp) {
+  var today = new Date(todayStamp + 'T12:00:00Z').getTime();
+  return names.filter(function (n) {
+    var m = /^Blue Barn Grain backup (\d{4})-(\d{2})-(\d{2})/.exec(n); if (!m) return false;
+    if (m[3] === '01') return false;
+    return (today - new Date(m[1] + '-' + m[2] + '-' + m[3] + 'T12:00:00Z').getTime()) / 86400000 > 30;
+  });
+}
+function pruneBackups_(folder, stamp) {
+  var files = [], it = folder.getFiles();
+  while (it.hasNext()) files.push(it.next());
+  var drop = backupsToRemove_(files.map(function (f) { return f.getName(); }), stamp);
+  files.forEach(function (f) { if (drop.indexOf(f.getName()) >= 0) f.setTrashed(true); });
+  return drop.length;
+}
+
+/** Emails an Excel (.xlsx) copy of every tab — the copy that lives outside Google. */
+function emailExcel_(id, to, stamp, live) {
+  var url = 'https://docs.google.com/spreadsheets/d/' + id + '/export?format=xlsx';
+  var blob = UrlFetchApp.fetch(url, { headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() } }).getBlob()
+    .setName('Blue Barn Grain ' + stamp + (live ? '' : ' TEST') + '.xlsx');
+  MailApp.sendEmail({ to: to, name: 'BBL&C backup', subject: 'Blue Barn Grain weekly backup ' + stamp + (live ? '' : ' (TEST)'),
+    body: 'Attached is an Excel copy of every tab in the Blue Barn Grain Sheet as of ' + stamp + '.\n\n' +
+      'Keep these emails: they are the copy of the grain records that lives outside Google. ' +
+      'Daily copies are also kept in Google Drive → ' + BACKUP_FOLDER + ' (Bluebarn.grain account).',
+    attachments: [blob] });
 }

@@ -37,7 +37,10 @@ async function load(force) {
 }
 function status(msg) {
   const d = O.data;
-  $('oStatus').textContent = msg || (d ? `Updated ${new Date(d.at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` + (testMode() ? ' · TEST MODE: test tickets included' : '') : '');
+  const bl = d && d.backupLog && d.backupLog.length ? d.backupLog[d.backupLog.length - 1] : null;
+  const bAge = bl ? (Date.now() - new Date(bl.At).getTime()) / 3600000 : null;
+  const bTxt = !d ? '' : !bl ? ' · No backups yet' : ` · Last backup ${new Date(bl.At).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` + (bAge > 36 ? ' — OVERDUE, check the backup' : '');
+  $('oStatus').textContent = msg || (d ? `Updated ${new Date(d.at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` + bTxt + (testMode() ? ' · TEST MODE: test tickets included' : '') : '');
 }
 const D = () => O.data || { editLog: [], tickets: [], splits: [], allocations: [], adjustments: [], purchases: [], pricing: [], contracts: [], customers: [], fields: [], shares: [], commodities: [], settings: {} };
 function years() {
@@ -763,6 +766,25 @@ function printWhenReady(a) {
   img.onload = img.onerror = go;
   setTimeout(go, 3000);
 }
+// Year-end archive: one printout (Save to Files → PDF) with everything for a crop year.
+function printArchive() {
+  const year = O.year || String(new Date().getFullYear());
+  const keep = { tab: O.tab, year: O.year, open: O.open, fieldPick: O.fieldPick, tvoid: O.tvoid, tq: O.tq, tdir: O.tdir };
+  O.year = year; O.fieldPick = ''; O.open = {};
+  // open every field and contract so their tickets are included
+  R.fieldReport(D(), opt()).forEach(r => { O.open[`${r.field}|${r.commodity}|${r.cropYear}`] = true; });
+  D().contracts.filter(c => String(c.CropYear) === year).forEach(c => { O.open['c:' + c.ContractNo] = true; });
+  const part = (title, html) => { const d = document.createElement('div'); d.innerHTML = html; d.querySelectorAll('button, .ofilters, input, select').forEach(x => x.remove()); d.querySelectorAll('.ohead h2').forEach(h => h.remove());
+    return `<div class="asec"><h2>${title}</h2>${d.innerHTML}</div>`; };
+  const body = part('Inventory and sales position — ' + year, inventory()) + part('Field report — ' + year, fields()) + part('Contracts — ' + year, contracts()) +
+    part('Landlord grain — ' + year, landlord()) + part('Write-offs', writeoffs()) + part('Inventory adjustments', adjustments());
+  Object.assign(O, keep);
+  let a = $('printArea');
+  if (!a) { a = document.createElement('div'); a.id = 'printArea'; document.body.appendChild(a); }
+  a.className = 'report';
+  a.innerHTML = letterhead(`${year} crop year archive`, `Printed ${new Date().toLocaleString()} · inventory, field report with every load, every contract's tickets, landlord grain, write-offs and adjustments`) + body;
+  printWhenReady(a);
+}
 function printReport() {
   let a = $('printArea');
   if (!a) { a = document.createElement('div'); a.id = 'printArea'; document.body.appendChild(a); }
@@ -809,6 +831,7 @@ function init() {
   $('oYear').onchange = () => { O.year = $('oYear').value; render(); };
   $('oRefresh').onclick = () => load(true);
   $('oPrint').onclick = printReport;
+  $('oArchive').onclick = printArchive;
   $('cSave').onclick = saveContract; $('cCancel').onclick = () => $('contractDlg').close();
   $('aSave').onclick = saveAdj; $('aCancel').onclick = () => $('adjDlg').close();
   $('pAdd').onclick = () => openPricing(null);

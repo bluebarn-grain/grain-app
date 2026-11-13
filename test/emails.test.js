@@ -83,6 +83,11 @@ ok('TEST sheet: test tickets count, emails go only to OfficeEmail, and are logge
   b5.ctx.nightlyEmails_(ss5, new Date('2026-11-13T01:00:00Z'), false, false);
   assert.equal(b5.sent.length, 0);
 });
+ok('backups: keep 30 days plus the 1st of each month', () => {
+  const names = ['Blue Barn Grain backup 2026-11-13', 'Blue Barn Grain backup 2026-10-14', 'Blue Barn Grain backup 2026-10-13 (TEST)',
+    'Blue Barn Grain backup 2026-10-01', 'Blue Barn Grain backup 2025-03-17', 'Something else'];
+  assert.deepEqual(be.ctx.backupsToRemove_(names, '2026-11-13'), ['Blue Barn Grain backup 2026-10-13 (TEST)', 'Blue Barn Grain backup 2025-03-17']);
+});
 ok('banter tab created and lines rotate day to day', () => {
   assert.ok(S.Banter.data.length > 15);
   const b = be.ctx.banter_(ss); const a = be.ctx.pick_(b.Opener, 100, 'x'), c = be.ctx.pick_(b.Opener, 101, 'x');

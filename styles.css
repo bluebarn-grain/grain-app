@@ -175,4 +175,9 @@ select.inline{width:auto;display:inline-block;font-size:15px;padding:3px 6px;mar
   #printArea .raddr{font-size:9.5pt;color:#333}
   #printArea .rtitle{font:700 13pt Arial,sans-serif;margin-top:4px}
   #printArea .rsub{font-size:8.5pt;color:#555}
+  #printArea .asec{break-before:page}
+  #printArea .rhead + .asec{break-before:auto}
+  #printArea h2{font-size:13pt;margin:4px 0 6px}
+  #printArea tr.sub td{background:none}
+  #printArea .hint{color:#444}
 }

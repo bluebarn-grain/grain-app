@@ -564,6 +564,20 @@ function renderDiag() {
     <div><div class="label">Sync</div><pre>${esc(`Status: ${S.net} ${S.netErr}\nWaiting: ${pending().length}\nLists: ${S.listsAt ? new Date(S.listsAt).toLocaleString() : 'never'}\n` + S.diag.sync.join('\n'))}</pre></div>
     <div><div class="label">This PC</div><pre>${esc(`App ${VERSION}\nNext ticket ${c.nextTicket ?? '-'} · last load # ${c.lastLoad ?? '-'}\nTickets stored here: ${S.tickets.length}\nSerial support: ${'serial' in navigator ? 'yes' : 'NO'}`)}</pre></div>`;
 }
+// Safety copy of every ticket stored in this browser, synced or not.
+function exportTickets() {
+  const head = ['Ticket', 'Status', 'Synced', 'In/Out', 'Weighed in', 'Weighed out', 'Commodity', 'CropYear', 'Field', 'LoadNo', 'Buyer', 'Contract', 'BOL', 'Truck', 'Driver', 'Gross', 'Tare', 'Net', 'Bushels', 'Moisture', 'TestWeight', 'FM', 'Remarks', 'Test'];
+  const q = v => { v = v == null ? '' : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  const rows = S.tickets.slice().sort((a, b) => a.no - b.no).map(t => [t.no, t.status, t.synced ? 'yes' : 'NO', t.dir, t.first && t.first.at, t.second && t.second.at, t.commodity, t.cropYear, t.field, t.loadNo,
+    t.buyer, t.contractNo, t.bol, t.truck, t.driver, t.gross, t.tare, t.net, t.wetBu, t.grade && t.grade.moisture, t.grade && t.grade.tw, t.grade && t.grade.fm, t.remarks, t.test ? 'yes' : '']);
+  const csv = [head, ...rows].map(r => r.map(q).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = `Blue Barn tickets on ${S.config.station || 'this PC'} ${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  const waiting = S.tickets.filter(t => !t.synced && t.status !== 'Open').length;
+  $('exportMsg').textContent = `Saved ${S.tickets.length} tickets` + (waiting ? `, ${waiting} not yet synced` : ', all synced') + '.';
+}
 function render() { renderPills(); renderScale(); renderYard(); renderUnmatched(); renderDone(); renderDetailInfo(); if ($('diag').open) renderDiag(); }
 
 // ---------------- settings ----------------
@@ -622,6 +636,7 @@ async function init() {
   $('sOff').onclick = () => { SIM.target = 0; };
   $('sMoist').onclick = simMoisture;
   $('diag').addEventListener('toggle', () => { if ($('diag').open) renderDiag(); });
+  $('exportTk').onclick = exportTickets;
   for (const id of Object.keys(FORM_KEYS).concat(['m', 'tw', 'tp', 'fm'])) { $(id).addEventListener('change', onFormEdit); $(id).addEventListener('input', onFormEdit); }
   window.addEventListener('online', () => sync(true));
 

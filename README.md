@@ -63,6 +63,15 @@ Tap **Office** at the top (same app, same link). It works on the iPad or a phone
 - **Dry bushels** use water shrink to the commodity's standard moisture (Commodities tab). To use a flat shrink instead, add **ShrinkPerPoint** to Settings (e.g. 1.4 for 1.4% per point).
 - **Print** prints the report you're looking at on letter paper.
 
+## Backups
+- **Every night at 11 pm** the backend saves a dated copy of the whole Sheet into Google Drive → **Grain Backups** (Bluebarn.grain account). The last 30 days are kept, plus the copy from the 1st of every month forever. The folder is shared with Settings → **BackupShareWith**.
+- **Every Sunday** an Excel (.xlsx) copy of every tab is emailed to Settings → **BackupEmail** (or OfficeEmail). That's the copy that lives outside Google — keep those emails.
+- The **BackupLog** tab shows each run, and the Office status line shows the last backup (and says OVERDUE if it's been more than a day and a half).
+- Setup: run **setupBackups** once in the script editor and approve Google Drive access. It makes a backup and sends one Excel email right away.
+- **Year-end archive** (Office, top bar): one printout per crop year — inventory, field report with every load, every contract's tickets, landlord grain, write-offs and adjustments. Print → Save to Files for a PDF.
+- **Scale PC:** Diagnostics → *Download every ticket on this PC (CSV)* saves a safety copy of the tickets stored in that browser, synced or not. Keep the office copy of printed tickets until that day's loads show Synced.
+- **Account:** turn on 2-step verification for Bluebarn.grain and set recovery phone and email. Losing that account is the one thing the backups above are there for.
+
 ## Scale PC tips
 - Use **Chrome** or **Edge**. Serial ports don't work in Safari or Firefox.
 - Install it as an app: Chrome menu → **Cast, save and share → Install page as app**.
@@ -78,6 +87,8 @@ node test/unit.test.js          # parsers and backend logic
 node test/emails.test.js        # nightly buyer emails and contract roll-over
 node test/reports.test.js       # office reports, contracts, adjustments
 node test/server.js & node test/e2e-office.js   # office side in the browser
+node test/server.js & node test/e2e-office2.js  # paper tickets, fixes, BOLs, discounts, legal
+node test/server.js & node test/e2e-backup.js   # ticket export, backup status, year-end archive
 ROLLOVER=1 node test/server.js & node test/e2e-rollover.js   # roll-over in the browser
 node test/server.js &           # fake backend on a mock Sheet
 node test/e2e.js shot.png       # browser run-through on the simulator
