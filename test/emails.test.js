@@ -59,6 +59,24 @@ ok('preview goes only to the office and includes test tickets', () => {
   assert.ok(be.sent.every(m => m.to === 'office@bblc.example'));
   assert.match(be.sent[0].subject, /^\[PREVIEW for logistics@/);
 });
+ok('TEST sheet: test tickets count, emails go only to OfficeEmail, and are logged', () => {
+  const ss4 = testSheet(), T4 = ss4.sheets;
+  T4.Customers.data[2][5] = 'real-buyer@andersons.example';
+  T4.Settings.data.push(['OfficeEmail', 'chris@example.com', '']);
+  const b4 = loadBackend(ss4, { SHEET_ID: 'x', API_KEY: 'k' });
+  b4.call({ action: 'saveTickets', key: 'k', tickets: [out(900201, '2026-11-12T18:00:00Z', 1000, { test: true }), out(900202, '2026-11-12T19:00:00Z', 1000, { test: true })] });
+  b4.ctx.nightlyEmails_(ss4, new Date('2026-11-13T01:00:00Z'), false, true);
+  assert.equal(b4.sent.length, 1);
+  assert.equal(b4.sent[0].to, 'chris@example.com');
+  assert.match(b4.sent[0].subject, /^\[TEST for real-buyer@andersons.example\] BBL&C shipped 2 loads today/);
+  b4.sent.length = 0; b4.ctx.nightlyEmails_(ss4, new Date('2026-11-13T01:00:00Z'), false, true);
+  assert.equal(b4.sent.length, 0);   // already sent, not repeated
+  // and the live behavior still skips test tickets
+  const ss5 = testSheet(); ss5.sheets.Customers.data[2][5] = 'b@x.example'; const b5 = loadBackend(ss5, { SHEET_ID: 'x', API_KEY: 'k' });
+  b5.call({ action: 'saveTickets', key: 'k', tickets: [out(900301, '2026-11-12T18:00:00Z', 1000, { test: true })] });
+  b5.ctx.nightlyEmails_(ss5, new Date('2026-11-13T01:00:00Z'), false, false);
+  assert.equal(b5.sent.length, 0);
+});
 ok('banter tab created and lines rotate day to day', () => {
   assert.ok(S.Banter.data.length > 15);
   const b = be.ctx.banter_(ss); const a = be.ctx.pick_(b.Opener, 100, 'x'), c = be.ctx.pick_(b.Opener, 101, 'x');

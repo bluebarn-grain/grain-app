@@ -326,8 +326,9 @@ function setupNightlyEmails() {
 
 /** Trigger entry point. */
 function sendNightlyEmails() {
-  var ss = SpreadsheetApp.openById(PROPS.getProperty('SHEET_ID'));
-  return nightlyEmails_(ss, new Date(), false);
+  var id = PROPS.getProperty('SHEET_ID'), ss = SpreadsheetApp.openById(id);
+  // On the TEST sheet, test tickets count and every email goes only to OfficeEmail, never to a buyer.
+  return nightlyEmails_(ss, new Date(), false, id === TEST_SHEET_ID);
 }
 
 /** Sends today's emails to OfficeEmail only, test tickets included. Nothing is logged as sent. */
@@ -362,7 +363,7 @@ function pick_(list, dayNo, salt) {
   return list[(dayNo + h) % list.length];
 }
 
-function nightlyEmails_(ss, now, preview) {
+function nightlyEmails_(ss, now, preview, testEnv) {
   var today = day_(now), dayNo = Math.floor(new Date(today + 'T12:00:00Z').getTime() / 86400000);
   var settings = {}; rows_(tab_(ss, 'Settings')).forEach(function (r) { if (r.Key) settings[r.Key] = r.Value; });
   var office = String(settings.OfficeEmail || '').trim();
@@ -372,7 +373,7 @@ function nightlyEmails_(ss, now, preview) {
   var halfLoad = (Number(settings.TypicalLoadBu) || 1000) / 2;
 
   var out = rows_(tab_(ss, 'Tickets')).filter(function (t) {
-    return t.Direction === 'OUT' && t.Status === 'Closed' && (preview || !isTrue_(t.TestTicket));
+    return t.Direction === 'OUT' && t.Status === 'Closed' && (preview || testEnv || !isTrue_(t.TestTicket));
   });
   var lock = LockService.getScriptLock(); lock.waitLock(20000);
   try { allocatePending_(ss); } finally { lock.releaseLock(); }
@@ -415,13 +416,13 @@ function nightlyEmails_(ss, now, preview) {
   var sent = [];
   Object.keys(byBuyer).forEach(function (key) {
     var g = byBuyer[key];
-    if (!g.to) { problems.push(g.buyer + ' shipped today but has no email on the Customers tab. Nothing was sent to them.'); return; }
+    if (!g.to && !testEnv) { problems.push(g.buyer + ' shipped today but has no email on the Customers tab. Nothing was sent to them.'); return; }
     var msg = buildEmail_(g, contracts, toDate, loadsToDate, truckBu, banter, dayNo, now, halfLoad);
-    var to = preview ? office : g.to;
+    var to = preview || testEnv ? office : g.to;
     if (!to) return;
     MailApp.sendEmail({
       to: to, name: 'BBL&C', replyTo: office || undefined,
-      subject: (preview ? '[PREVIEW for ' + g.to + '] ' : '') + msg.subject,
+      subject: (preview ? '[PREVIEW for ' + g.to + '] ' : testEnv ? '[TEST for ' + (g.to || g.buyer) + '] ' : '') + msg.subject,
       body: msg.text, htmlBody: msg.html,
       attachments: [Utilities.newBlob(msg.csv, 'text/csv', 'BBLC tickets ' + today + ' ' + g.buyer + '.csv')]
     });
@@ -430,7 +431,7 @@ function nightlyEmails_(ss, now, preview) {
   });
 
   if (problems.length && office) {
-    MailApp.sendEmail({ to: office, name: 'BBL&C scale', subject: (preview ? '[PREVIEW] ' : '') + 'Buyer emails for ' + today + ': ' + problems.length + ' thing(s) to fix', body: problems.join('\n\n') });
+    MailApp.sendEmail({ to: office, name: 'BBL&C scale', subject: (preview ? '[PREVIEW] ' : testEnv ? '[TEST] ' : '') + 'Buyer emails for ' + today + ': ' + problems.length + ' thing(s) to fix', body: problems.join('\n\n') });
   }
   return { sent: sent, problems: problems };
 }
