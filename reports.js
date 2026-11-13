@@ -79,7 +79,8 @@
   // Buying landlord grain moves bushels from the landlord to the farm. Sales, shrink and
   // adjustments are the farm's. Landlords' stored grain is theirs until bought.
   function operatorName(data) {
-    const op = (data.customers || []).find(c => c.Type === 'Operator');
+    const ops = (data.customers || []).filter(c => c.Type === 'Operator');
+    const op = ops.find(c => !(c.Active === false || String(c.Active).toUpperCase() === 'FALSE')) || ops[0];  // the active one, if there are two
     return op ? op.Customer : 'Farm';
   }
   function custType(data) { const t = {}; (data.customers || []).forEach(c => { t[c.Customer] = c.Type; }); return t; }
