@@ -74,21 +74,52 @@ function render() {
 function contracts() {
   const applied = R.appliedByContract(D(), opt());
   const pr = R.contractPricing(D(), opt());
+  const apps = R.contractApplications(D(), opt());
   const half = (Number(D().settings.TypicalLoadBu) || 1000) / 2;
   const cs = D().contracts.filter(c => !O.year || String(c.CropYear) === String(O.year))
     .sort((a, b) => (a.Status === 'Closed') - (b.Status === 'Closed') || String(a.Buyer).localeCompare(String(b.Buyer)) || new Date(a.ShipStart || 0) - new Date(b.ShipStart || 0));
   const rows = cs.map(c => {
-    const shipped = applied[String(c.ContractNo)] || 0, left = Number(c.Bushels || 0) - shipped;
+    const no = String(c.ContractNo), shipped = applied[no] || 0, left = Number(c.Bushels || 0) - shipped;
     const state = c.Status === 'Closed' ? 'Closed' : left < half ? 'Filled' : shipped ? 'Shipping' : 'Open';
-    return `<tr data-contract="${e(c.ContractNo)}" class="${state === 'Closed' || state === 'Filled' ? 'closed' : ''}">
-      <td><b>${e(c.ContractNo)}</b></td><td>${e(c.Buyer)}</td><td>${e(c.Commodity)} ${e(c.CropYear)}</td>
+    const open = O.open['c:' + no], tix = apps[no] || [];
+    return `<tr data-copen="${e(no)}" class="${state === 'Closed' || state === 'Filled' ? 'closed' : ''}">
+      <td>${open ? '▾' : '▸'} <b>${e(no)}</b></td><td>${e(c.Buyer)}</td><td>${e(c.Commodity)} ${e(c.CropYear)}</td>
       <td class="n">${n0(c.Bushels)}</td><td class="n">${n2(shipped)}</td><td class="n${left < 0 ? ' neg' : ''}">${n2(left)}</td>
-      <td>${pricedCell(pr[String(c.ContractNo)])}</td>
-      <td>${day(c.ShipStart)}${c.ShipEnd ? ' – ' + day(c.ShipEnd) : ''}</td><td>${state}</td></tr>`;
+      <td>${pricedCell(pr[no])}</td>
+      <td>${day(c.ShipStart)}${c.ShipEnd ? ' – ' + day(c.ShipEnd) : ''}</td><td>${state}</td></tr>` +
+      (open ? `<tr class="sub"><td colspan="9"><div class="subwrap">
+        <div class="ohead"><span class="hint">${tix.length} load${tix.length === 1 ? '' : 's'} applied · ${n2(shipped)} of ${n0(c.Bushels)} bu · ${n2(left)} left</span>
+          <div class="rowbtns"><button class="ghost" type="button" data-cprint="${e(no)}">Print report</button><button class="ghost" type="button" data-contract="${e(no)}">Edit contract / pricing</button></div></div>
+        ${tix.length ? applicationTable(tix) : '<div class="hint">No loads applied yet.</div>'}
+      </div></td></tr>` : '');
   }).join('');
   return `<div class="ohead"><h2>Contracts</h2><button class="big small" type="button" id="cNew">New contract</button></div>
     ${cs.length ? `<div class="tblwrap"><table><thead><tr><th>Contract</th><th>Buyer</th><th>Crop</th><th class="n">Bushels</th><th class="n">Shipped</th><th class="n">Left</th><th>Priced</th><th>Ship window</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <p class="hint">Tap a contract to change it. Filled and closed contracts don't show at the scale.</p>` : '<div class="empty">No contracts yet. Tap New contract to add one.</div>'}`;
+    <p class="hint">Tap a contract to see every ticket applied to it (application report), print it, or edit the contract and its pricing. Filled and closed contracts don't show at the scale.</p>` : '<div class="empty">No contracts yet. Tap New contract to add one.</div>'}`;
+}
+const dtm = v => { if (!v) return ''; const d = new Date(v); return isNaN(d) ? '' : `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()} ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`; };
+function applicationTable(tix) {
+  const tot = tix.reduce((a, t) => ({ gross: a.gross + t.gross, tare: a.tare + t.tare, net: a.net + t.net, bu: a.bu + t.bu }), { gross: 0, tare: 0, net: 0, bu: 0 });
+  return `<div class="tblwrap"><table><thead><tr><th>Ticket</th><th>Date / time</th><th>Truck</th><th>BOL</th><th class="n">Gross lb</th><th class="n">Tare lb</th><th class="n">Net lb</th><th class="n">Bushels</th><th class="n">Running bu</th></tr></thead><tbody>
+    ${tix.map(t => `<tr><td>${String(t.no).padStart(6, '0')}${t.test ? ' <span class="tag">test</span>' : ''}${t.rolledFrom ? ` <span class="hint">(from ${e(t.rolledFrom)})</span>` : ''}</td><td>${dtm(t.at)}</td><td>${e(t.truck)}</td><td>${e(t.bol)}</td>
+      <td class="n">${n0(t.gross)}</td><td class="n">${n0(t.tare)}</td><td class="n">${n0(t.net)}</td><td class="n">${n2(t.bu)}</td><td class="n">${n2(t.running)}</td></tr>`).join('')}
+    <tr class="total"><td>Total · ${tix.length} load${tix.length === 1 ? '' : 's'}</td><td></td><td></td><td></td><td class="n">${n0(tot.gross)}</td><td class="n">${n0(tot.tare)}</td><td class="n">${n0(tot.net)}</td><td class="n">${n2(tot.bu)}</td><td></td></tr>
+  </tbody></table></div>`;
+}
+function printContract(no) {
+  const c = D().contracts.find(x => String(x.ContractNo) === String(no)); if (!c) return;
+  const tix = R.contractApplications(D(), opt())[String(no)] || [];
+  const p = R.contractPricing(D(), opt())[String(no)];
+  const shipped = tix.reduce((a, t) => a + t.bu, 0);
+  let a = $('printArea');
+  if (!a) { a = document.createElement('div'); a.id = 'printArea'; document.body.appendChild(a); }
+  a.className = 'report';
+  a.innerHTML = `<h1>Blue Barn Land &amp; Cattle — Contract application report</h1>
+    <p><b>Contract ${e(c.ContractNo)}</b> · ${e(c.Buyer)} · ${e(c.Commodity)} ${e(c.CropYear)} · ${n0(c.Bushels)} bu${c.ShipStart ? ' · ship ' + day(c.ShipStart) + (c.ShipEnd ? ' – ' + day(c.ShipEnd) : '') : ''}<br>
+    Shipped ${n2(shipped)} bu on ${tix.length} load${tix.length === 1 ? '' : 's'} · ${n2(Number(c.Bushels) - shipped)} bu left
+    ${p && (p.priced || p.partial) ? `<br>Priced ${n0(p.priced)} bu${p.avgFlat != null ? ' @ ' + money(p.avgFlat) + ' avg' : ''}${p.partial ? ' · partly priced ' + n0(p.partial) + ' bu' : ''}${p.unpriced ? ' · unpriced ' + n0(p.unpriced) + ' bu' : ''}` : '<br>Not priced'}<br>
+    Weights from the Blue Barn scale. Printed ${new Date().toLocaleString()}</p>` + (tix.length ? applicationTable(tix) : '<p>No loads applied yet.</p>');
+  setTimeout(() => window.print(), 100);
 }
 const money = v => v == null || v === '' ? '—' : (Number(v) < 0 ? '−$' : '$') + Math.abs(Number(v)).toFixed(4).replace(/(\.\d\d)00$/, '$1').replace(/(\.\d\d\d)0$/, '$1');
 function pricedCell(p) {
@@ -547,7 +578,9 @@ function printReport() {
 // ---------------- wiring ----------------
 function wire() {
   const b = $('oBody');
-  b.querySelectorAll('[data-contract]').forEach(tr => tr.onclick = () => openContract(tr.dataset.contract));
+  b.querySelectorAll('[data-copen]').forEach(tr => tr.onclick = () => { O.open['c:' + tr.dataset.copen] = !O.open['c:' + tr.dataset.copen]; render(); });
+  b.querySelectorAll('[data-contract]').forEach(x => x.onclick = ev => { ev.stopPropagation(); openContract(x.dataset.contract); });
+  b.querySelectorAll('[data-cprint]').forEach(x => x.onclick = ev => { ev.stopPropagation(); printContract(x.dataset.cprint); });
   if ($('cNew')) $('cNew').onclick = () => openContract(null);
   b.querySelectorAll('[data-customer]').forEach(tr => tr.onclick = () => openCustomer(tr.dataset.customer));
   if ($('kNew')) $('kNew').onclick = () => openCustomer(null);

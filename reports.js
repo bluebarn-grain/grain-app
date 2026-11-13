@@ -175,6 +175,23 @@
     return out;
   }
 
+  // Application report: every ticket applied to each contract, oldest first, with a running total.
+  function contractApplications(data, opt = {}) {
+    const tk = {};
+    (data.tickets || []).forEach(t => { if (opt.includeTest || !isTrue(t.TestTicket)) tk[String(t.TicketNo)] = t; });
+    const out = {};
+    (data.allocations || []).forEach(a => {
+      const t = tk[String(a.TicketNo)]; if (!t) return;
+      (out[String(a.ContractNo)] = out[String(a.ContractNo)] || []).push({ no: num(t.TicketNo), at: t.DateTime, truck: t.Truck, driver: t.Driver, bol: t.BOLNo,
+        gross: num(t.GrossLb), tare: num(t.TareLb), net: num(t.NetLb), bu: num(a.Bushels), rolledFrom: t.RolledFrom || '', test: isTrue(t.TestTicket) });
+    });
+    Object.values(out).forEach(rows => {
+      rows.sort((a, b) => new Date(a.at) - new Date(b.at) || a.no - b.no);
+      let run = 0; rows.forEach(r => { run += r.bu; r.running = r2(run); });
+    });
+    return out;
+  }
+
   // Shrink written off when the bins were emptied, per commodity and crop year.
   function writeOffs(data, opt = {}) {
     return inventory(data, opt).filter(r => (data.adjustments || []).some(a => String(a.Status) !== 'Void' && a.Type === 'BinsEmpty' && a.Commodity === r.commodity && String(a.CropYear) === String(r.cropYear)))
@@ -187,7 +204,7 @@
       });
   }
 
-  const api = { shrinkFactor, fieldReport, inventory, landlordGrain, writeOffs, appliedByContract, operatorName, contractPricing };
+  const api = { shrinkFactor, fieldReport, inventory, landlordGrain, writeOffs, appliedByContract, operatorName, contractPricing, contractApplications };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BBR = api;
 })(typeof window !== 'undefined' ? window : globalThis);

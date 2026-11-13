@@ -26,13 +26,17 @@ const post = b => fetch(BASE + 'api', { method: 'POST', body: JSON.stringify({ k
   step('add a contract');
   await page.click('#cNew'); await page.fill('#cNo', 'AND-2611'); await page.selectOption('#cBuyer', 'The Andersons'); await page.fill('#cBu', '25000');
   await page.fill('#cStart', '2026-12-01'); await page.fill('#cEnd', '2027-01-31');
-  await page.click('#cSave'); await page.waitForSelector('#contractDlg', { state: 'hidden' }); await page.waitForSelector('tr[data-contract="AND-2611"]');
+  await page.click('#cSave'); await page.waitForSelector('#contractDlg', { state: 'hidden' }); await page.waitForSelector('tr[data-copen="AND-2611"]');
   console.log('   rows:', await page.$$eval('#oBody tbody tr', rs => rs.map(r => r.innerText.replace(/\s+/g, ' ')).join(' | ')));
   step('duplicate contract # is refused');
   await page.click('#cNew'); await page.fill('#cNo', 'AND-2611'); await page.fill('#cBu', '5'); await page.click('#cSave');
   await page.waitForFunction(() => /already exists/.test(document.getElementById('cMsg').textContent)); console.log('   says:', await page.textContent('#cMsg')); await page.click('#cCancel');
   step('price the shipping contract: one full line, one basis-only line');
-  await page.click('tr[data-contract="TEST-C1"]');
+  step('application report: tap TEST-C1 to see its tickets');
+  await page.click('tr[data-copen="TEST-C1"]');
+  await page.screenshot({ path: shots + '/office-application.png', fullPage: true });
+  console.log('   ', (await page.textContent('#oBody tr.sub')).replace(/\s+/g, ' ').slice(0, 500));
+  await page.click('#oBody tr.sub button[data-contract="TEST-C1"]');
   await page.click('#pAdd'); console.log('   default bushels:', await page.inputValue('#pBu'));
   await page.fill('#pBu', '6000'); await page.fill('#pMonth', 'Mar 27'); await page.fill('#pFut', '4.4525'); await page.fill('#pBasis', '-0.38'); await page.fill('#pFees', '0.015');
   console.log('   preview:', await page.textContent('#pResult'));
@@ -46,11 +50,11 @@ const post = b => fetch(BASE + 'api', { method: 'POST', body: JSON.stringify({ k
   await page.click('#cPricing tr[data-pricing="2"]'); await page.fill('#pMonth', 'May 27'); await page.fill('#pFut', '4.61');
   console.log('   preview:', await page.textContent('#pResult')); await page.click('#pSave'); await page.waitForSelector('#priceDlg', { state: 'hidden' });
   await page.click('#cCancel');
-  console.log('   contract row:', (await page.textContent('tr[data-contract="TEST-C1"]')).replace(/\s+/g, ' '));
+  console.log('   contract row:', (await page.textContent('tr[data-copen="TEST-C1"]')).replace(/\s+/g, ' '));
 
   step('edit it: close it');
-  await page.click('tr[data-contract="AND-2611"]'); await page.selectOption('#cStatus', 'Closed'); await page.click('#cSave'); await page.waitForSelector('#contractDlg', { state: 'hidden' });
-  await page.waitForFunction(() => /Closed/.test(document.querySelector('tr[data-contract="AND-2611"]').innerText));
+  await page.click('tr[data-copen="AND-2611"]'); await page.click('#oBody tr.sub button[data-contract="AND-2611"]'); await page.selectOption('#cStatus', 'Closed'); await page.click('#cSave'); await page.waitForSelector('#contractDlg', { state: 'hidden' });
+  await page.waitForFunction(() => /Closed/.test(document.querySelector('tr[data-copen="AND-2611"]').innerText));
   const atScale = await page.evaluate(() => window.BBG_APP.L().contracts.map(c => c.ContractNo)); console.log('   scale list now:', atScale);
 
   step('add a landlord');
