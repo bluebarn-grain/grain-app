@@ -8,26 +8,67 @@
   const isTrue = v => v === true || String(v).toUpperCase() === 'TRUE';
   const key = (...a) => a.join('|');
 
-  // Dry bushels. Water shrink to the commodity's standard moisture by default:
-  // dry = wet × (100 − M) / (100 − std). Settings → ShrinkPerPoint (e.g. 1.4) switches to a
-  // flat % per point over standard instead. Grain at or under standard isn't credited.
-  function shrinkFactor(moisture, std, perPoint) {
+  // Discount schedule for a commodity (Commodities tab). ShrinkMethod 'Water' shrinks out only the
+  // water: dry = wet × (100 − M) / (100 − std). 'PerPoint' takes a flat % per point over standard
+  // (pencil shrink). Handling shrink % is added on top when the grain is over standard.
+  function schedule(data, commodity) {
+    const c = (data.commodities || []).find(x => x.Commodity === commodity) || {};
+    const legacy = data.settings && data.settings.ShrinkPerPoint;   // older Settings-wide switch
+    const method = c.ShrinkMethod === 'PerPoint' || (!c.ShrinkMethod && has(legacy) && num(legacy) > 0) ? 'PerPoint' : 'Water';
+    return { commodity, lbPerBu: num(c.LbPerBu) || 56, std: has(c.StdMoisturePct) ? num(c.StdMoisturePct) : null, method,
+      perPoint: has(c.ShrinkPerPoint) ? num(c.ShrinkPerPoint) : (has(legacy) ? num(legacy) : 0), handling: num(c.HandlingShrinkPct),
+      drying: num(c.DryingPerPoint), baseTW: has(c.BaseTestWeight) ? num(c.BaseTestWeight) : null, twPerLb: num(c.TWDiscountPerLb), notes: c.ScheduleNotes || '' };
+  }
+  function shrinkFactor(moisture, std, perPoint, handling, method) {
     if (!has(moisture) || !has(std) || !num(std)) return 1;
     const m = num(moisture), s = num(std);
     if (m <= s) return 1;
-    if (num(perPoint) > 0) return Math.max(0, 1 - (m - s) * num(perPoint) / 100);
-    return (100 - m) / (100 - s);
+    const usePP = method ? method === 'PerPoint' : num(perPoint) > 0;
+    const f = usePP ? 1 - (m - s) * num(perPoint) / 100 : (100 - m) / (100 - s);
+    return Math.max(0, f - num(handling) / 100);
+  }
+  // The math for one load, step by step, so it can be shown and checked.
+  function shrinkMath(data, commodity, wetBu, moisture, tw) {
+    const k = schedule(data, commodity), wet = num(wetBu), steps = [];
+    const f2 = x => (Math.round(x * 100) / 100).toFixed(2), f4 = x => (Math.round(x * 10000) / 10000).toString();
+    const over = has(moisture) && k.std != null ? Math.max(0, num(moisture) - k.std) : 0;
+    let moistShrinkPct = 0;
+    if (!has(moisture)) steps.push(['No moisture reading', 'counted as dry; no shrink']);
+    else if (k.std == null) steps.push(['No standard moisture set for ' + commodity, 'no shrink']);
+    else if (over <= 0) steps.push([`Moisture ${num(moisture)}% is at or under the ${k.std}% standard`, 'no shrink']);
+    else if (k.method === 'PerPoint') {
+      moistShrinkPct = over * k.perPoint;
+      steps.push([`Points over standard`, `${num(moisture)}% − ${k.std}% = ${f4(over)} points`]);
+      steps.push([`Moisture shrink at ${k.perPoint}% per point`, `${f4(over)} × ${k.perPoint}% = ${f4(moistShrinkPct)}%`]);
+    } else {
+      moistShrinkPct = (1 - (100 - num(moisture)) / (100 - k.std)) * 100;
+      steps.push([`Water shrink to ${k.std}%`, `1 − (100 − ${num(moisture)}) ÷ (100 − ${k.std}) = 1 − ${f4(100 - num(moisture))} ÷ ${f4(100 - k.std)} = ${f4(moistShrinkPct)}%`]);
+    }
+    const handling = over > 0 ? k.handling : 0;
+    if (handling) steps.push(['Handling shrink', `+ ${handling}%`]);
+    const totalPct = Math.min(100, moistShrinkPct + handling);
+    if (totalPct) steps.push(['Total shrink', `${f4(totalPct)}%`]);
+    const shrinkBu = wet * totalPct / 100, dry = wet - shrinkBu;
+    steps.push(['Dry bushels', `${f2(wet)} wet bu − ${f2(wet)} × ${f4(totalPct)}% = ${f2(wet)} − ${f2(shrinkBu)} = ${f2(dry)} dry bu`]);
+    const drying = over > 0 && k.drying ? over * k.drying * wet : 0;
+    if (drying) steps.push(['Drying charge', `${f4(over)} points × $${k.drying} × ${f2(wet)} wet bu = $${f2(drying)}`]);
+    const twShort = has(tw) && k.baseTW != null ? Math.max(0, k.baseTW - num(tw)) : 0;
+    const twDisc = twShort && k.twPerLb ? twShort * k.twPerLb * dry : 0;
+    if (twDisc) steps.push(['Test weight discount', `${k.baseTW} − ${num(tw)} = ${f4(twShort)} lb under × $${k.twPerLb} × ${f2(dry)} dry bu = $${f2(twDisc)}`]);
+    return { schedule: k, steps, wetBu: r2(wet), shrinkPct: Math.round(totalPct * 10000) / 10000, shrinkBu: r2(shrinkBu), dryBu: r2(dry),
+      dryingCharge: r2(drying), twDiscount: r2(twDisc), totalDiscount: r2(drying + twDisc) };
   }
 
   function prep(data, opt = {}) {
-    const std = {}, lbBu = {};
-    (data.commodities || []).forEach(c => { std[c.Commodity] = c.StdMoisturePct; lbBu[c.Commodity] = num(c.LbPerBu) || 56; });
-    const perPoint = data.settings && data.settings.ShrinkPerPoint;
+    const lbBu = {}, sched = {};
+    (data.commodities || []).forEach(c => { lbBu[c.Commodity] = num(c.LbPerBu) || 56; });
+    const S = c => sched[c] = sched[c] || schedule(data, c);
     const tickets = (data.tickets || []).filter(t => t.Status === 'Closed' && (opt.includeTest || !isTrue(t.TestTicket)))
       .filter(t => !opt.cropYear || String(t.CropYear) === String(opt.cropYear))
-      .filter(t => !opt.commodity || t.Commodity === opt.commodity);
-    const dry = t => r2(num(t.WetBu) * shrinkFactor(t.MoisturePct, std[t.Commodity], perPoint));
-    return { tickets, dry, std, lbBu, perPoint };
+      .filter(t => !opt.commodity || t.Commodity === opt.commodity)
+      .filter(t => !opt.field || t.Field === opt.field);
+    const dry = t => { const k = S(t.Commodity); return r2(num(t.WetBu) * shrinkFactor(t.MoisturePct, k.std, k.perPoint, k.handling, k.method)); };
+    return { tickets, dry, lbBu };
   }
 
   // One row per field, commodity and crop year, with each owner's share and the tickets behind it.
@@ -204,7 +245,7 @@
       });
   }
 
-  const api = { shrinkFactor, fieldReport, inventory, landlordGrain, writeOffs, appliedByContract, operatorName, contractPricing, contractApplications };
+  const api = { shrinkFactor, shrinkMath, schedule, fieldReport, inventory, landlordGrain, writeOffs, appliedByContract, operatorName, contractPricing, contractApplications };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BBR = api;
 })(typeof window !== 'undefined' ? window : globalThis);

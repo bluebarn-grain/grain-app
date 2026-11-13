@@ -194,7 +194,7 @@ function simMoisture() {
 }
 
 // ---------------- form ----------------
-const FORM_KEYS = { buyer: 'buyer', contract: 'contractNo', field: 'field', comm: 'commodity', cy: 'cropYear', truck: 'truck', driver: 'driver', op: 'operator', rm: 'remarks' };
+const FORM_KEYS = { buyer: 'buyer', contract: 'contractNo', field: 'field', comm: 'commodity', cy: 'cropYear', truck: 'truck', driver: 'driver', op: 'operator', rm: 'remarks', bol: 'bol' };
 function readForm() { const o = {}; for (const [id, k] of Object.entries(FORM_KEYS)) o[k] = $(id).value.trim(); return o; }
 function setOptions(sel, items, keep) {
   const cur = keep ?? sel.value;
@@ -245,7 +245,8 @@ function loadDetail() {
   $('buyer').value = src.buyer || '';
   fillContracts(src.contractNo || '');
   for (const [id, k] of Object.entries(FORM_KEYS)) if (!['buyer', 'contract'].includes(id) && src[k] != null && src[k] !== '') $(id).value = src[k];
-  if (!t) { $('driver').value = S.draft.driver || ''; $('rm').value = S.draft.remarks || ''; $('truck').value = S.draft.truck || ''; }
+  if (!t) { $('driver').value = S.draft.driver || ''; $('rm').value = S.draft.remarks || ''; $('truck').value = S.draft.truck || ''; $('bol').value = S.draft.bol || ''; }
+  else $('bol').value = t.bol || '';
   if (!$('op').value) $('op').value = S.config.operator || '';
   const g = (t && t.grade) || {};
   $('m').value = g.moisture ?? ''; $('tw').value = g.tw ?? ''; $('tp').value = g.temp ?? ''; $('fm').value = g.fm ?? (t ? '' : (L().settings.FMDefault ?? 0));
@@ -292,20 +293,19 @@ async function weighIn() {
   const inUse = openTickets().filter(t => t.dir === 'IN').map(t => t.loadNo);
   const t = await DB.issue(c => {
     const ticket = {
-      no: c.nextTicket, dir, status: 'Open', bol: dir === 'OUT' ? c.nextBol : null, loadNo: null,
-      ...d, contractNo: dir === 'OUT' ? d.contractNo : '', buyer: dir === 'OUT' ? d.buyer : '', field: dir === 'IN' ? d.field : '',
+      no: c.nextTicket, dir, status: 'Open', loadNo: null,
+      ...d, bol: dir === 'OUT' ? (d.bol || '') : null, contractNo: dir === 'OUT' ? d.contractNo : '', buyer: dir === 'OUT' ? d.buyer : '', field: dir === 'IN' ? d.field : '',
       first: { lb: w, at: now }, second: null,
       grade: dir === 'IN' ? { moisture: null, tw: null, temp: null, fm: Number(L().settings.FMDefault || 0), source: null } : null,
       readings: [], synced: false, createdAt: now, station: S.config.station, test: !!S.config.test
     };
     const nc = { ...c, nextTicket: c.nextTicket + 1 };
-    if (dir === 'OUT') nc.nextBol = c.nextBol + 1;
     if (dir === 'IN') { ticket.loadNo = P.nextLoadNo(c.lastLoad, inUse); nc.lastLoad = ticket.loadNo; }
     return { ticket, counters: nc };
   });
   S.counters = await DB.get('kv', 'counters');
   S.tickets.push(t);
-  S.draft = { ...S.draft, truck: '', driver: '', remarks: '' };
+  S.draft = { ...S.draft, truck: '', driver: '', remarks: '', bol: '' };
   toast(dir === 'IN'
     ? `Ticket ${pad6(t.no)} · LOAD # ${t.loadNo} · ${t.truck} in at ${fmt0(w)} lb. Key ${t.loadNo} into the moisture tester.`
     : `Ticket ${pad6(t.no)} · ${t.truck} in empty at ${fmt0(w)} lb`, 5000);
@@ -316,6 +316,11 @@ async function weighOut() {
   if (t.dir === 'IN' && (!t.grade || t.grade.moisture == null) && !t._noGradeOk) {
     t._noGradeOk = true; toast(`Load ${t.loadNo} has no moisture reading. Press Weigh Out again to close it without one.`, 6000); return;
   }
+  if (t.dir === 'OUT' && !String(t.bol || '').trim() && !t._noBolOk) {
+    t._noBolOk = true; toast("No bill of lading # on this truck. Type the buyer's BOL #, or press Weigh Out again to close it without one.", 7000); $('bol').focus(); return;
+  }
+  const dupBol = t.dir === 'OUT' && t.bol && S.tickets.find(x => x !== t && x.dir === 'OUT' && x.status !== 'Void' && x.buyer === t.buyer && String(x.bol).trim() === String(t.bol).trim());
+  if (dupBol && !t._dupBolOk) { t._dupBolOk = true; toast(`BOL ${t.bol} was already used on ticket ${pad6(dupBol.no)} for ${t.buyer}. Fix it, or press Weigh Out again if it's right.`, 8000); return; }
   const w = S.weight.lb, now = new Date().toISOString();
   t.second = { lb: w, at: now };
   if (t.dir === 'OUT') { t.tare = t.first.lb; t.gross = w; } else { t.gross = t.first.lb; t.tare = w; }
@@ -326,7 +331,7 @@ async function weighOut() {
     const r = P.applyToContracts(t.wetBu, t.contractNo, L().contracts, appliedNow());
     if (r.parts.length && r.parts[0].contractNo !== String(t.contractNo)) { t.rolledFrom = String(t.contractNo); t.contractNo = r.parts[0].contractNo; }
   }
-  t.status = 'Closed'; t.closedAt = now; delete t._noGradeOk;
+  t.status = 'Closed'; t.closedAt = now; delete t._noGradeOk; delete t._noBolOk; delete t._dupBolOk;
   await DB.put('tickets', t);
   S.sel = null;
   printTicket(t);
@@ -521,6 +526,12 @@ function renderDone() {
     : '<tr><td colspan="6" class="hint">Nothing finished today yet.</td></tr>';
   $('done').querySelectorAll('tr[data-no]').forEach(tr => tr.onclick = () => { const t = S.tickets.find(x => x.no === Number(tr.dataset.no)); if (t) { printTicket(t); toast('Reprinting ' + pad6(t.no)); } });
 }
+// BOL numbers come from each buyer's own book and aren't in order, so they're typed in; the last one used is a hint.
+function lastBolHint() {
+  const b = $('buyer').value; if (!b) return "Buyer's BOL #";
+  const last = S.tickets.filter(x => x.dir === 'OUT' && x.buyer === b && x.bol && x.status !== 'Void').sort((a, c) => String(c.closedAt || c.createdAt).localeCompare(String(a.closedAt || a.createdAt)))[0];
+  return last ? `Last for ${b}: ${last.bol}` : "Buyer's BOL #";
+}
 function renderDetailInfo() {
   const t = selTicket(), dir = t ? t.dir : S.dir;
   $('dTitle').textContent = t ? `Ticket ${pad6(t.no)} · ${t.truck}` : 'New truck';
@@ -530,7 +541,7 @@ function renderDetailInfo() {
   $('vSecondLbl').textContent = dir === 'OUT' ? 'Gross · loaded out' : 'Tare · empty out';
   $('vFirst').textContent = t ? fmt0(t.first.lb) : '—';
   if (!t) { $('vSecond').textContent = '—'; $('vNet').textContent = '—'; $('vBu').textContent = '0.00'; }
-  $('bol').value = t ? (t.bol ?? '') : (S.counters && dir === 'OUT' ? S.counters.nextBol + ' (next)' : '');
+  $('bol').placeholder = lastBolHint();
   $('loadNo').textContent = t && t.loadNo ? '# ' + t.loadNo : 'Assigned at weigh in';
   $('void').hidden = !t;
   const ci = contractInfo($('contract').value);
@@ -551,7 +562,7 @@ function renderDiag() {
     <div><div class="label">Moisture lines</div><pre>${esc(S.diag.moist.join('\n'))}</pre></div>
     <div><div class="label">Unreadable lines</div><pre>${esc(S.diag.other.join('\n'))}</pre></div>
     <div><div class="label">Sync</div><pre>${esc(`Status: ${S.net} ${S.netErr}\nWaiting: ${pending().length}\nLists: ${S.listsAt ? new Date(S.listsAt).toLocaleString() : 'never'}\n` + S.diag.sync.join('\n'))}</pre></div>
-    <div><div class="label">This PC</div><pre>${esc(`App ${VERSION}\nNext ticket ${c.nextTicket ?? '-'} · next BOL ${c.nextBol ?? '-'} · last load # ${c.lastLoad ?? '-'}\nTickets stored here: ${S.tickets.length}\nSerial support: ${'serial' in navigator ? 'yes' : 'NO'}`)}</pre></div>`;
+    <div><div class="label">This PC</div><pre>${esc(`App ${VERSION}\nNext ticket ${c.nextTicket ?? '-'} · last load # ${c.lastLoad ?? '-'}\nTickets stored here: ${S.tickets.length}\nSerial support: ${'serial' in navigator ? 'yes' : 'NO'}`)}</pre></div>`;
 }
 function render() { renderPills(); renderScale(); renderYard(); renderUnmatched(); renderDone(); renderDetailInfo(); if ($('diag').open) renderDiag(); }
 
@@ -560,7 +571,7 @@ function openSettings(first) {
   const c = S.config, k = S.counters || {};
   $('setIntro').textContent = first ? 'First-time setup for this PC. The starting numbers come from the backend if it is connected; check them before saving.' : 'Changing the ticket numbers here affects the next ticket issued on this PC.';
   $('sUrl').value = c.backendUrl; $('sKey').value = c.key; $('sStation').value = c.station; $('sOp').value = c.operator;
-  $('sTicket').value = k.nextTicket ?? (L().settings.NextTicketNo || ''); $('sBol').value = k.nextBol ?? (L().settings.NextBOLNo || '');
+  $('sTicket').value = k.nextTicket ?? (L().settings.NextTicketNo || '');
   $('sBaud').value = String(c.baud || 9600); $('sTest').checked = !!c.test; $('sSim').checked = !!c.sim; $('setMsg').textContent = '';
   $('settings').showModal();
 }
@@ -572,19 +583,18 @@ async function checkBackend() {
     const j = await api({ action: 'ping' });
     await refreshLists();
     if (!$('sTicket').value && L().settings.NextTicketNo) $('sTicket').value = L().settings.NextTicketNo;
-    if (!$('sBol').value && L().settings.NextBOLNo) $('sBol').value = L().settings.NextBOLNo;
     $('setMsg').textContent = `Connected to "${j.sheet}". ${L().customers.length} customers, ${L().fields.length} fields, ${L().contracts.length} open contracts.`;
   } catch (e) { $('setMsg').textContent = 'Could not connect: ' + e.message; Object.assign(S.config, { backendUrl: prev.backendUrl, key: prev.key }); }
 }
 async function saveSettings() {
-  const nt = parseInt($('sTicket').value, 10), nb = parseInt($('sBol').value, 10);
-  if (!(nt > 0) || !(nb > 0)) { $('setMsg').textContent = 'Enter the next ticket number and next bill of lading number.'; return; }
+  const nt = parseInt($('sTicket').value, 10);
+  if (!(nt > 0)) { $('setMsg').textContent = 'Enter the next ticket number.'; return; }
   const maxUsed = Math.max(0, ...S.tickets.map(t => t.no));
   if (nt <= maxUsed) { $('setMsg').textContent = `Ticket ${pad6(maxUsed)} already exists on this PC. The next ticket must be higher.`; return; }
   const wasSim = S.config.sim;
   S.config = { ...S.config, backendUrl: $('sUrl').value.trim(), key: $('sKey').value.trim(), station: $('sStation').value.trim() || 'Scale house', operator: $('sOp').value.trim(), baud: Number($('sBaud').value), test: $('sTest').checked, sim: $('sSim').checked };
   await DB.put('kv', S.config, 'config');
-  S.counters = { ...(S.counters || { lastLoad: 0 }), nextTicket: nt, nextBol: nb };
+  S.counters = { ...(S.counters || { lastLoad: 0 }), nextTicket: nt };
   await DB.put('kv', S.counters, 'counters');
   if (S.config.sim && !wasSim) simStart(); if (!S.config.sim && wasSim) simStop();
   $('settings').close(); toast('Settings saved'); fillLists(); render(); loadDetail(); sync(true);
@@ -616,7 +626,7 @@ async function init() {
   window.addEventListener('online', () => sync(true));
 
   // Hand the office screens (office.js) what they need from here.
-  window.BBG_APP = { api, DB, S, L, toast, esc, fmt0, fmt2, dt, refreshLists, online: () => S.net === 'online', configured: () => !!(S.config.backendUrl && S.config.key) };
+  window.BBG_APP = { printTicket, api, DB, S, L, toast, esc, fmt0, fmt2, dt, refreshLists, online: () => S.net === 'online', configured: () => !!(S.config.backendUrl && S.config.key) };
   window.dispatchEvent(new Event('bbg-ready'));
 
   fillLists(); loadDetail(); render();

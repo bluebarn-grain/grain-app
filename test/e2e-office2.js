@@ -1,0 +1,90 @@
+// Paper tickets, ticket fixes, hand-entered BOLs, discount schedules, land legal, one-field report.
+// Start the server first: node test/server.js
+const { chromium } = require('playwright');
+const BASE = 'http://localhost:8123/';
+const shots = process.argv[2] || '/tmp';
+(async () => {
+  const browser = await chromium.launch();
+  const page = await (await browser.newContext({ viewport: { width: 1180, height: 820 } })).newPage();
+  const errors = []; page.on('pageerror', e => errors.push(e.message)); page.on('console', m => { if (m.type() === 'error' && !/ERR_EMPTY/.test(m.text())) errors.push(m.text()); });
+  await page.addInitScript(() => { window.print = () => { window.__printed = (window.__printed || 0) + 1; }; });
+  const step = s => console.log('•', s);
+  const stable = async () => { await page.waitForFunction(() => document.getElementById('flag').textContent === 'STABLE', null, { timeout: 15000 }); await page.waitForTimeout(300); };
+  await page.goto(BASE); await page.waitForSelector('#settings[open]');
+  await page.fill('#sUrl', BASE + 'api'); await page.fill('#sKey', 'k'); await page.check('#sSim'); await page.fill('#sOp', 'Chris');
+  await page.click('#sCheck'); await page.waitForFunction(() => /Connected/.test(document.getElementById('setMsg').textContent)); await page.click('#sSave');
+
+  step('scale: outbound BOL is typed in; blank BOL asks first');
+  await page.click('#dOut'); await page.click('#sOff'); await page.waitForTimeout(400); await page.click('#sEmpty'); await stable();
+  await page.selectOption('#buyer', 'The Andersons'); await page.selectOption('#contract', 'TEST-C1'); await page.fill('#truck', 'BOL-1');
+  console.log('   BOL box readonly?', await page.$eval('#bol', x => x.readOnly), '| placeholder:', await page.$eval('#bol', x => x.placeholder));
+  await page.click('#wIn'); await page.click('.yrow >> text=BOL-1'); await page.click('#sLoad'); await stable();
+  await page.click('#wOut'); console.log('   first press:', (await page.textContent('#toast')).slice(0, 80));
+  await page.fill('#bol', '1027262'); await page.dispatchEvent('#bol', 'input'); await page.waitForTimeout(200);
+  await page.click('#wOut'); await page.waitForTimeout(1200);
+  console.log('   printed BOL line:', (await page.$eval('#printArea pre', e => e.textContent)).split('\n').find(l => /BILL OF LADING/.test(l)));
+  step('next truck for same buyer: hint shows last BOL; reused BOL warns');
+  await page.click('#newT'); await page.click('#dOut'); await page.click('#sOff'); await page.waitForTimeout(400); await page.click('#sEmpty'); await stable();
+  await page.selectOption('#buyer', 'The Andersons'); await page.selectOption('#contract', 'TEST-C1'); await page.fill('#truck', 'BOL-2');
+  console.log('   placeholder now:', await page.$eval('#bol', x => x.placeholder));
+  await page.fill('#bol', '1027262'); await page.dispatchEvent('#bol', 'input');
+  await page.click('#wIn'); await page.click('.yrow >> text=BOL-2'); await page.click('#sLoad'); await stable();
+  await page.click('#wOut'); console.log('   says:', (await page.textContent('#toast')).slice(0, 100));
+  await page.fill('#bol', '1027990'); await page.dispatchEvent('#bol', 'input'); await page.waitForTimeout(200); await page.click('#wOut'); await page.waitForTimeout(1500);
+
+  step('office → Tickets: add a paper ticket');
+  await page.click('#navOffice'); await page.waitForFunction(() => /Updated/.test(document.getElementById('oStatus').textContent));
+  await page.click('[data-tab="tickets"]'); await page.click('#tNew');
+  await page.fill('#tNo', '5012'); await page.fill('#tIn', '2026-11-12T14:05'); await page.fill('#tOut', '2026-11-12T14:22');
+  await page.selectOption('#tField', 'TEST Share Quarter'); await page.fill('#tLoad', '7'); await page.fill('#tTruck', 'Cart 2');
+  await page.fill('#tGross', '80000'); await page.fill('#tTare', '24000'); await page.fill('#tM', '17.2'); await page.fill('#tTw', '56.1');
+  console.log('   calc:', await page.textContent('#tCalc'));
+  await page.click('#tSave'); await page.waitForSelector('#ticketDlg', { state: 'hidden' }); await page.waitForSelector('tr[data-ticket="5012"]');
+  await page.screenshot({ path: shots + '/office-tickets.png', fullPage: true });
+  console.log('   row:', (await page.textContent('tr[data-ticket="5012"]')).replace(/\s+/g, ' '));
+  step('duplicate paper ticket # refused');
+  await page.click('#tNew'); await page.fill('#tNo', '5012'); await page.fill('#tOut', '2026-11-12T15:00'); await page.selectOption('#tField', 'TEST Home Place'); await page.fill('#tGross', '70000'); await page.fill('#tTare', '20000');
+  await page.click('#tSave'); await page.waitForFunction(() => /already/.test(document.getElementById('tMsg').textContent)); console.log('   says:', await page.textContent('#tMsg')); await page.click('#tCancel');
+
+  step('fix it: wrong field');
+  await page.click('tr[data-ticket="5012"]'); await page.selectOption('#tField', 'TEST Home Place'); await page.click('#tSave');
+  console.log('   without a reason:', await page.textContent('#tMsg'));
+  await page.fill('#tReason', 'Fat finger — was Home Place'); await page.click('#tSave'); await page.waitForSelector('#ticketDlg', { state: 'hidden' });
+  await page.waitForFunction(() => /TEST Home Place/.test(document.querySelector('tr[data-ticket="5012"]').textContent));
+  await page.click('tr[data-ticket="5012"]'); console.log('   history:', (await page.textContent('#tHistory')).replace(/\s+/g, ' '));
+  await page.screenshot({ path: shots + '/office-ticket-edit.png' });
+  await page.click('#tPrint'); console.log('   reprint ok:', await page.evaluate(() => /LOAD # 7/.test(document.querySelector('#printArea pre').textContent)));
+  await page.click('#tCancel');
+  step('move an outbound ticket to another buyer; then void a ticket');
+  const outNo = await page.$eval('#oBody tr[data-ticket] td', td => td.textContent.trim().replace(/^0+/, ''));
+  await page.selectOption('#tdirSel', 'OUT'); await page.click('#oBody tr[data-ticket]');
+  await page.selectOption('#tBuyer', 'TEST Buyer B'); console.log('   contracts for Buyer B:', await page.$$eval('#tContract option', o => o.map(x => x.value)));
+  await page.fill('#tReason', 'Wrong customer'); await page.click('#tSave'); await page.waitForSelector('#ticketDlg', { state: 'hidden' });
+  console.log('   ', (await page.textContent('#oBody tbody tr')).replace(/\s+/g, ' '));
+  await page.click('#oBody tr[data-ticket]'); await page.fill('#tReason', 'Duplicate'); await page.click('#tVoid'); await page.click('#tVoid');
+  await page.waitForSelector('#ticketDlg', { state: 'hidden' }); await page.waitForTimeout(500);
+  await page.check('#tvoid'); console.log('   with voided shown, first row:', (await page.textContent('#oBody tbody tr')).replace(/\s+/g, ' '));
+
+  step('discount schedule: corn to 1.4%/pt + 0.5% handling, drying 3¢, TW');
+  await page.click('[data-tab="discounts"]');
+  console.log('   default math:', (await page.textContent('#cxOut')).replace(/\s+/g, ' '));
+  await page.click('button[data-comm="Corn"]'); await page.selectOption('#dMethod', 'PerPoint'); await page.fill('#dPP', '1.4'); await page.fill('#dHand', '0.5');
+  await page.fill('#dDry', '0.03'); await page.fill('#dTW', '54'); await page.fill('#dTWd', '0.02'); await page.click('#dSave'); await page.waitForSelector('#commDlg', { state: 'hidden' });
+  await page.waitForFunction(() => /per point/.test(document.getElementById('oBody').textContent));
+  await page.fill('#cxTw', '52'); await page.dispatchEvent('#cxTw', 'input');
+  console.log('   new math:', (await page.textContent('#cxOut')).replace(/\s+/g, ' '));
+  await page.screenshot({ path: shots + '/office-discounts.png', fullPage: true });
+
+  step('field legal + one-field report');
+  await page.click('[data-tab="fieldsetup"]'); await page.click('tr[data-field="TEST Home Place"]');
+  await page.fill('#fCounty', 'Kiowa'); await page.fill('#fSec', '12'); await page.fill('#fTwp', '26s'); await page.fill('#fRng', '17w'); await page.fill('#fAcres', '160');
+  await page.click('#fSave'); await page.waitForSelector('#fieldDlg', { state: 'hidden' });
+  await page.waitForFunction(() => /Kiowa/.test(document.querySelector('tr[data-field="TEST Home Place"]').textContent));
+  console.log('   row:', (await page.textContent('tr[data-field="TEST Home Place"]')).replace(/\s+/g, ' '));
+  await page.click('[data-tab="fields"]'); await page.selectOption('#oField', 'TEST Home Place');
+  await page.screenshot({ path: shots + '/office-onefield.png', fullPage: true });
+  console.log('   ', (await page.textContent('#oBody')).replace(/\s+/g, ' ').slice(0, 420));
+  await page.click('#oPrint'); await page.waitForTimeout(500); console.log('   print title:', await page.$eval('#printArea .rtitle', x => x.textContent));
+  console.log('errors:', errors);
+  await browser.close();
+})().catch(e => { console.error(e); process.exit(1); });

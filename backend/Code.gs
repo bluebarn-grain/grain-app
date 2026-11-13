@@ -66,6 +66,9 @@ function handle_(p) {
       case 'voidPurchase': return out_(merge_({ ok: true }, voidPurchase_(ss, p.purchaseNo, p.by)));
       case 'savePricing': return out_(merge_({ ok: true }, savePricing_(ss, p.pricing || {})));
       case 'voidPricing': return out_(merge_({ ok: true }, voidPricing_(ss, p.pricingNo, p.by)));
+      case 'addManualTicket': return out_(merge_({ ok: true }, addManualTicket_(ss, p.ticket || {}, p.by)));
+      case 'editTicket': return out_(merge_({ ok: true }, editTicket_(ss, p.ticketNo, p.changes || {}, p.by, p.reason)));
+      case 'saveCommodity': return out_(merge_({ ok: true }, saveCommodity_(ss, p.commodity || {}, !!p.isNew)));
       case 'voidAdjustment': return out_(merge_({ ok: true }, voidAdjustment_(ss, p.adjNo, p.by)));
       default: return out_({ ok: false, error: 'Unknown action: ' + p.action });
     }
@@ -149,7 +152,7 @@ function saveTickets_(ss, tickets, station) {
     tickets.forEach(function (t) {
       var no = Number(t.no);
       if (!no) return;
-      maxNo = Math.max(maxNo, no); if (t.bol) maxBol = Math.max(maxBol, Number(t.bol));
+      if (!t.manual) maxNo = Math.max(maxNo, no);
       if (existing[no]) { saved.push(no); return; }
       var row = new Array(tc.width).fill('');
       var set = function (k, v) { if (tc.map[k]) row[tc.map[k] - 1] = (v === null || v === undefined) ? '' : v; };
@@ -157,7 +160,7 @@ function saveTickets_(ss, tickets, station) {
       set('Direction', t.dir); set('Commodity', t.commodity); set('CropYear', t.cropYear); set('Field', t.field);
       set('ContractNo', t.contractNo); set('Destination', t.buyer); set('Buyer', t.buyer);
       set('Truck', t.truck); set('Driver', t.driver); set('Operator', t.operator);
-      set('GrossLb', t.gross); set('TareLb', t.tare); set('NetLb', t.net); set('WetBu', t.wetBu); set('ManualWeight', false);
+      set('GrossLb', t.gross); set('TareLb', t.tare); set('NetLb', t.net); set('WetBu', t.wetBu); set('ManualWeight', !!t.manual);
       set('MoisturePct', t.moisture); set('TestWeight', t.tw); set('GrainTempF', t.temp); set('FMPct', t.fm); set('GradeSource', t.gradeSource);
       set('Status', t.status); set('Remarks', t.remarks); set('CreatedAt', t.timeIn ? new Date(t.timeIn) : now);
       set('BOLNo', t.bol); set('LoadNo', t.loadNo); set('TimeIn', t.timeIn ? new Date(t.timeIn) : '');
@@ -186,7 +189,6 @@ function saveTickets_(ss, tickets, station) {
     if (tOut.length) tsh.getRange(tsh.getLastRow() + 1, 1, tOut.length, tc.width).setValues(tOut);
     if (sOut.length) ssh.getRange(ssh.getLastRow() + 1, 1, sOut.length, sc.width).setValues(sOut);
     bumpSetting_(ss, 'NextTicketNo', maxNo + 1);
-    if (maxBol) bumpSetting_(ss, 'NextBOLNo', maxBol + 1);
     warnings = warnings.concat(allocatePending_(ss).warnings);
     return { saved: saved, warnings: warnings };
   } finally {
@@ -508,9 +510,10 @@ function sheetOrNew_(ss, name, cols) {
 function officeData_(ss) {
   var lock = LockService.getScriptLock(); lock.waitLock(20000);
   try { allocatePending_(ss); } finally { lock.releaseLock(); }
-  var keep = ['TicketNo', 'DateTime', 'Direction', 'Status', 'Commodity', 'CropYear', 'Field', 'ContractNo', 'Buyer', 'Truck', 'LoadNo',
-    'GrossLb', 'TareLb', 'NetLb', 'WetBu', 'MoisturePct', 'TestWeight', 'FMPct', 'BOLNo', 'TestTicket', 'RolledFrom'];
-  var tickets = rows_(tab_(ss, 'Tickets')).filter(function (t) { return t.TicketNo !== '' && t.Status === 'Closed'; })
+  var keep = ['TicketNo', 'DateTime', 'Direction', 'Status', 'Commodity', 'CropYear', 'Field', 'ContractNo', 'Buyer', 'Truck', 'Driver', 'Operator', 'LoadNo',
+    'GrossLb', 'TareLb', 'NetLb', 'WetBu', 'MoisturePct', 'TestWeight', 'GrainTempF', 'FMPct', 'BOLNo', 'TestTicket', 'RolledFrom', 'ManualWeight',
+    'TimeIn', 'TimeOut', 'Remarks', 'Station', 'PaperTicket', 'EditedAt'];
+  var tickets = rows_(tab_(ss, 'Tickets')).filter(function (t) { return t.TicketNo !== '' && (t.Status === 'Closed' || t.Status === 'Void'); })
     .map(function (t) { var o = {}; keep.forEach(function (k) { o[k] = t[k]; }); return o; });
   var opt = function (name) { var sh = ss.getSheetByName(name); return sh ? rows_(sh) : []; };
   var settings = {}; rows_(tab_(ss, 'Settings')).forEach(function (r) { if (r.Key) settings[r.Key] = r.Value; });
@@ -525,6 +528,7 @@ function officeData_(ss) {
     customers: rows_(tab_(ss, 'Customers')).filter(function (c) { return c.Customer; }),
     fields: rows_(tab_(ss, 'Fields')).filter(function (f) { return f.Field; }),
     shares: rows_(tab_(ss, 'Shares')).filter(function (r) { return r.Field && r.Owner; }),
+    editLog: opt('EditLog').slice(-500),
     commodities: rows_(tab_(ss, 'Commodities')).filter(function (c) { return c.Commodity; }),
     settings: settings,
     at: new Date().toISOString()
@@ -605,7 +609,7 @@ function voidAdjustment_(ss, adjNo, by) {
 
 /* ---- customers, fields and splits ---- */
 var CUSTOMER_COLUMNS = ['Customer', 'Type', 'PaysAsName', 'Contact', 'Phone', 'Email', 'Address', 'Active', 'Notes'];
-var FIELD_COLUMNS = ['Field', 'Acres', 'OpsCenterName', 'FSAFarm', 'FSATract', 'InsuranceUnit', 'Active', 'Notes'];
+var FIELD_COLUMNS = ['Field', 'Acres', 'OpsCenterName', 'FSAFarm', 'FSATract', 'InsuranceUnit', 'Active', 'Notes', 'Section', 'Township', 'Range', 'County'];
 var CUSTOMER_TYPES = ['Buyer', 'Landlord', 'Operator'];
 
 /** Adds a row or updates the row whose key column matches. The key can't change once saved. */
@@ -645,7 +649,7 @@ function saveField_(ss, f, isNew) {
     var rec = { Field: f.Field };
     if ('Acres' in f) rec.Acres = acres;
     if ('Active' in f || isNew) rec.Active = f.Active === false || String(f.Active).toUpperCase() === 'FALSE' ? false : true;
-    ['OpsCenterName', 'FSAFarm', 'FSATract', 'InsuranceUnit', 'Notes'].forEach(function (k) { if (k in f) rec[k] = String(f[k] == null ? '' : f[k]).trim(); });
+    ['OpsCenterName', 'FSAFarm', 'FSATract', 'InsuranceUnit', 'Notes', 'Section', 'Township', 'Range', 'County'].forEach(function (k) { if (k in f) rec[k] = String(f[k] == null ? '' : f[k]).trim(); });
     return { field: upsert_(ss, 'Fields', FIELD_COLUMNS, 'Field', rec, isNew, 'Field') };
   } finally { lock.releaseLock(); }
 }
@@ -774,4 +778,151 @@ function voidPricing_(ss, no, by) {
     }
     throw new Error('Pricing line ' + no + ' was not found');
   } finally { lock.releaseLock(); }
+}
+
+
+/* ---- tickets typed in from paper, and fixing tickets ---- */
+var EDIT_COLUMNS = ['TicketNo', 'At', 'By', 'Reason', 'Changes'];
+var EDITABLE = { Field: 'Field', Buyer: 'Buyer', ContractNo: 'Contract', Commodity: 'Commodity', CropYear: 'Crop year', Truck: 'Truck', Driver: 'Driver',
+  BOLNo: 'BOL', LoadNo: 'Load #', GrossLb: 'Gross', TareLb: 'Tare', MoisturePct: 'Moisture', TestWeight: 'Test weight', GrainTempF: 'Temp', FMPct: 'FM',
+  Remarks: 'Remarks', DateTime: 'Date/time', Status: 'Status', PaperTicket: 'Paper ticket #' };
+
+function ticketRow_(ss, no) {
+  var sh = tab_(ss, 'Tickets'), c = ensureColumns_(sh, TICKET_COLUMNS.concat(['PaperTicket', 'EditedAt']));
+  var v = sh.getDataRange().getValues();
+  for (var i = 1; i < v.length; i++) if (Number(v[i][c.map.TicketNo - 1]) === Number(no)) return { sh: sh, c: c, at: i + 1, row: v[i] };
+  return { sh: sh, c: c, at: -1 };
+}
+/** Removes every row of a tab where the TicketNo column matches; rewrites the tab without them. */
+function dropTicketRows_(sh, no) {
+  var v = sh.getDataRange().getValues(); if (v.length < 2) return;
+  var head = v.shift(), col = head.indexOf('TicketNo');
+  var keep = v.filter(function (r) { return Number(r[col]) !== Number(no); });
+  var gone = v.length - keep.length; if (!gone) return;
+  if (keep.length) sh.getRange(2, 1, keep.length, head.length).setValues(keep);
+  sh.getRange(2 + keep.length, 1, gone, head.length).setValues(new Array(gone).fill(0).map(function () { return new Array(head.length).fill(''); }));
+}
+function lbPerBu_(ss, commodity) {
+  var c = rows_(tab_(ss, 'Commodities')).filter(function (x) { return x.Commodity === commodity; })[0];
+  return (c && Number(c.LbPerBu)) || 56;
+}
+/** Owner split rows for an inbound ticket, from the field's split for that crop year. */
+function writeSplits_(ss, no, field, cropYear, commodity, net) {
+  var ssh = tab_(ss, 'TicketSplits'), sc = ensureColumns_(ssh, SPLIT_COLUMNS), warn = '';
+  var sh = rows_(tab_(ss, 'Shares')).filter(function (s) { return s.Field === field && String(s.CropYear) === String(cropYear); })
+    .map(function (s) { return { owner: s.Owner, pct: Number(s.SharePct) }; });
+  var total = sh.reduce(function (a, s) { return a + s.pct; }, 0);
+  if (!sh.length || Math.abs(total - 100) > 0.001) { warn = 'Ticket ' + no + ': no complete split for ' + field + ' ' + cropYear + '; recorded as UNASSIGNED.'; sh = [{ owner: 'UNASSIGNED', pct: 100 }]; }
+  var out = splitNet_(Number(net) || 0, lbPerBu_(ss, commodity), sh).map(function (s) {
+    var r = new Array(sc.width).fill(''); r[sc.map.TicketNo - 1] = no; r[sc.map.Owner - 1] = s.owner; r[sc.map.SharePct - 1] = s.pct; r[sc.map.NetLb - 1] = s.netLb; r[sc.map.WetBu - 1] = s.wetBu; return r;
+  });
+  if (out.length) ssh.getRange(ssh.getLastRow() + 1, 1, out.length, sc.width).setValues(out);
+  return warn;
+}
+function logEdit_(ss, no, by, reason, changes) {
+  var sh = ss.getSheetByName('EditLog'); if (!sh) sh = ss.insertSheet('EditLog');
+  var c = ensureColumns_(sh, EDIT_COLUMNS), r = new Array(c.width).fill('');
+  r[c.map.TicketNo - 1] = Number(no); r[c.map.At - 1] = new Date(); r[c.map.By - 1] = by; r[c.map.Reason - 1] = reason || ''; r[c.map.Changes - 1] = changes;
+  sh.getRange(sh.getLastRow() + 1, 1, 1, c.width).setValues([r]);
+}
+
+/**
+ * A ticket typed in from a paper (punch) ticket, for when the power or internet was out.
+ * It keeps the paper ticket's own number, which must not already be used, and is marked ManualWeight.
+ */
+function addManualTicket_(ss, t, by) {
+  if (!String(by || '').trim()) throw new Error('Enter who is typing in the ticket');
+  var no = Number(t.no);
+  if (!(no > 0)) throw new Error('Enter the paper ticket number');
+  if (t.dir !== 'IN' && t.dir !== 'OUT') throw new Error('Pick inbound or outbound');
+  if (!t.commodity || !t.cropYear) throw new Error('Pick the commodity and crop year');
+  var gross = Number(t.gross), tare = Number(t.tare);
+  if (!(gross > 0) || !(tare >= 0) || gross <= tare) throw new Error('Gross must be more than tare');
+  if (t.dir === 'IN' && !t.field) throw new Error('Pick the field');
+  if (t.dir === 'OUT' && !t.buyer) throw new Error('Pick the buyer');
+  if (ticketRow_(ss, no).at > 0) throw new Error('Ticket ' + no + ' is already in the system');
+  var net = gross - tare, bu = Math.round(net / lbPerBu_(ss, t.commodity) * 100) / 100;
+  var wire = { no: no, dir: t.dir, status: 'Closed', manual: true, commodity: t.commodity, cropYear: Number(t.cropYear), field: t.dir === 'IN' ? t.field : '',
+    buyer: t.dir === 'OUT' ? t.buyer : '', contractNo: t.dir === 'OUT' ? (t.contractNo || 'TBD') : '', truck: t.truck || '', driver: t.driver || '', operator: by,
+    gross: gross, tare: tare, net: net, wetBu: bu, moisture: t.moisture === '' ? null : t.moisture, tw: t.tw === '' ? null : t.tw, fm: t.fm === '' ? null : t.fm,
+    gradeSource: 'manual', bol: t.bol || '', loadNo: t.loadNo || '', remarks: ('Typed from paper ticket. ' + (t.remarks || '')).trim(),
+    timeIn: t.timeIn || t.timeOut, timeOut: t.timeOut || t.timeIn, station: 'Office (paper ticket)', test: !!t.test };
+  var r = saveTickets_(ss, [wire], 'Office');
+  var x = ticketRow_(ss, no); x.sh.getRange(x.at, x.c.map.PaperTicket).setValue(no);
+  logEdit_(ss, no, by, 'Typed in from paper ticket', 'Added by hand: ' + t.dir + ' ' + t.commodity + ' ' + (t.field || t.buyer) + ', ' + net + ' lb net');
+  return { ticketNo: no, wetBu: bu, warnings: r.warnings };
+}
+
+/**
+ * Fixes a ticket: wrong field, buyer, contract, truck, weights, grades... Recomputes net and
+ * bushels, redoes the owner split (inbound) and the contract it applies to (outbound), and
+ * writes what changed to the EditLog tab. Status 'Void' takes it out of every total.
+ */
+function editTicket_(ss, no, ch, by, reason) {
+  if (!String(by || '').trim()) throw new Error('Enter who is making the change');
+  if (!String(reason || '').trim()) throw new Error('Enter why it is being changed');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var x = ticketRow_(ss, no);
+    if (x.at < 0) throw new Error('Ticket ' + no + ' was not found');
+    var m = x.c.map, row = x.row.slice(); while (row.length < x.c.width) row.push('');
+    var get = function (k) { return row[m[k] - 1]; }, set = function (k, v) { row[m[k] - 1] = v; };
+    var dir = get('Direction'), changes = [];
+    Object.keys(ch).forEach(function (k) {
+      if (!EDITABLE[k]) return;
+      var nv = ch[k], ov = get(k);
+      if (['GrossLb', 'TareLb', 'CropYear', 'LoadNo'].indexOf(k) >= 0 && nv !== '') nv = Number(nv);
+      if (['MoisturePct', 'TestWeight', 'GrainTempF', 'FMPct'].indexOf(k) >= 0) nv = nv === '' || nv == null ? '' : Number(nv);
+      if (k === 'DateTime') nv = nv ? new Date(nv) : ov;
+      var same = (ov instanceof Date && nv instanceof Date) ? ov.getTime() === nv.getTime() : String(ov) === String(nv);
+      if (same) return;
+      if (k === 'Status' && ['Closed', 'Void'].indexOf(nv) < 0) throw new Error('Status can only be Closed or Void');
+      changes.push(EDITABLE[k] + ': ' + (ov instanceof Date ? ov.toLocaleString() : ov) + ' → ' + (nv instanceof Date ? nv.toLocaleString() : nv));
+      set(k, nv);
+      if (k === 'Buyer') set('Destination', nv);
+      if (k === 'GrossLb' || k === 'TareLb') set('ManualWeight', true);
+    });
+    if (!changes.length) return { ticketNo: Number(no), changed: 0 };
+    var gross = Number(get('GrossLb')), tare = Number(get('TareLb'));
+    if (!(gross > tare)) throw new Error('Gross must be more than tare');
+    set('NetLb', gross - tare); set('WetBu', Math.round((gross - tare) / lbPerBu_(ss, get('Commodity')) * 100) / 100);
+    if ('ContractNo' in ch || 'Buyer' in ch) {
+      set('RolledFrom', '');
+      var k = rows_(tab_(ss, 'Contracts')).filter(function (c) { return String(c.ContractNo) === String(get('ContractNo')); })[0];
+      if (dir === 'OUT' && k && k.Buyer !== get('Buyer')) { changes.push('Contract: ' + get('ContractNo') + ' → TBD (it belongs to ' + k.Buyer + ')'); set('ContractNo', 'TBD'); }
+    }
+    set('EditedAt', new Date());
+    x.sh.getRange(x.at, 1, 1, x.c.width).setValues([row]);
+    // redo the owner split and the contract it applies to
+    var warns = [];
+    dropTicketRows_(tab_(ss, 'TicketSplits'), no);
+    var tcs = ss.getSheetByName('TicketContracts'); if (tcs) dropTicketRows_(tcs, no);
+    if (get('Status') === 'Closed') {
+      if (dir === 'IN') { var w = writeSplits_(ss, Number(no), get('Field'), get('CropYear'), get('Commodity'), get('NetLb')); if (w) warns.push(w); }
+      else warns = warns.concat(allocatePending_(ss).warnings);
+    }
+    logEdit_(ss, no, String(by).trim(), String(reason).trim(), changes.join('; '));
+    return { ticketNo: Number(no), changed: changes.length, changes: changes, warnings: warns };
+  } finally { lock.releaseLock(); }
+}
+
+/* ---- discount schedules (one row per commodity on the Commodities tab) ---- */
+var COMMODITY_COLUMNS = ['Commodity', 'LbPerBu', 'StdMoisturePct', 'ShrinkMethod', 'ShrinkPerPoint', 'HandlingShrinkPct', 'DryingPerPoint', 'BaseTestWeight', 'TWDiscountPerLb', 'ScheduleNotes'];
+function saveCommodity_(ss, c, isNew) {
+  var name = String(c.Commodity || '').trim();
+  if (!name) throw new Error('Commodity name is required');
+  var n = function (k, what, min, max) {
+    if (c[k] === '' || c[k] == null) return '';
+    var v = Number(c[k]); if (isNaN(v) || v < min || v > max) throw new Error(what + ' must be between ' + min + ' and ' + max);
+    return v;
+  };
+  var rec = { Commodity: name, LbPerBu: n('LbPerBu', 'Lb per bushel', 1, 100), StdMoisturePct: n('StdMoisturePct', 'Standard moisture', 0, 40),
+    ShrinkMethod: c.ShrinkMethod === 'PerPoint' ? 'PerPoint' : 'Water', ShrinkPerPoint: n('ShrinkPerPoint', 'Shrink per point', 0, 5),
+    HandlingShrinkPct: n('HandlingShrinkPct', 'Handling shrink', 0, 10), DryingPerPoint: n('DryingPerPoint', 'Drying charge', 0, 1),
+    BaseTestWeight: n('BaseTestWeight', 'Base test weight', 0, 80), TWDiscountPerLb: n('TWDiscountPerLb', 'Test weight discount', 0, 1), ScheduleNotes: String(c.ScheduleNotes || '').trim() };
+  if (rec.LbPerBu === '') throw new Error('Enter lb per bushel');
+  if (rec.ShrinkMethod === 'PerPoint' && rec.ShrinkPerPoint === '') throw new Error('Enter the shrink % per point');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try { return { commodity: upsert_(ss, 'Commodities', COMMODITY_COLUMNS, 'Commodity', rec, isNew, 'Commodity') }; }
+  finally { lock.releaseLock(); }
 }

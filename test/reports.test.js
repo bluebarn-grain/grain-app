@@ -31,6 +31,23 @@ const data = {
   adjustments: [{ AdjNo: 1, Type: 'Opening', Commodity: 'Corn', CropYear: 2026, Bushels: 10000, Status: 'Active' }]
 };
 
+ok('discount schedule math: per point, handling, drying, test weight', () => {
+  const d = { ...data, commodities: [{ Commodity: 'Corn', LbPerBu: 56, StdMoisturePct: 15.5, ShrinkMethod: 'PerPoint', ShrinkPerPoint: 1.4, HandlingShrinkPct: 0.5, DryingPerPoint: 0.03, BaseTestWeight: 54, TWDiscountPerLb: 0.02 }] };
+  const m = R.shrinkMath(d, 'Corn', 1000, 18, 52);
+  assert.equal(m.shrinkPct, 4);          // 2.5 points × 1.4% + 0.5% handling
+  assert.equal(m.dryBu, 960);
+  assert.equal(m.dryingCharge, 75);      // 2.5 × $0.03 × 1000
+  assert.equal(m.twDiscount, 38.4);      // 2 lb × $0.02 × 960
+  assert.ok(m.steps.some(s => /2.5 × 1.4% = 3.5%/.test(s[1])));
+  const w = R.shrinkMath(data, 'Corn', 1000, 18, '');   // default water shrink
+  near(w.dryBu, 970.41);
+  const under = R.shrinkMath(d, 'Corn', 1000, 15, 56);
+  assert.equal(under.dryBu, 1000); assert.equal(under.totalDiscount, 0);
+  // the reports use the schedule too
+  const rows = R.fieldReport({ ...d, tickets: data.tickets });
+  near(rows.find(r => r.field === 'Home Place').dryBu, 960 + 500);
+});
+
 ok('field report: totals, weighted moisture, owners, bu/acre, test tickets left out', () => {
   const rows = R.fieldReport(data);
   assert.equal(rows.length, 2);
@@ -43,6 +60,7 @@ ok('field report: totals, weighted moisture, owners, bu/acre, test tickets left 
   assert.equal(sq.noMoisture, 1); assert.equal(sq.dryBu, 1000); assert.equal(sq.acres, null);
   assert.deepEqual(sq.owners.map(o => [o.owner, o.dryBu]), [['Roenbaugh Farms', 500], ['Landlord A', 500]]);
   assert.equal(R.fieldReport(data, { includeTest: true }).find(r => r.field === 'Home Place').loads, 3);
+  assert.deepEqual(R.fieldReport(data, { field: 'Share Quarter' }).map(r => r.field), ['Share Quarter']);
 });
 
 ok('inventory: opening + dry in − out, open contracts, unsold', () => {
@@ -159,6 +177,56 @@ ok('pricing lines: add, flat worked out, partial then completed, can\'t over-pri
   assert.ok(call({ action: 'voidPricing', pricingNo: 1, by: 'Chris' }).ok);
   const pr = call({ action: 'officeData' }).pricing;
   assert.deepEqual(pr.map(x => [x.PricingNo, x.FlatPrice]), [[2, 4.2]]);
+});
+ok('manual ticket from paper: added with its own number, split, not bumping the scale counter', () => {
+  const before = call({ action: 'lists' }).settings.NextTicketNo;
+  let j = call({ action: 'addManualTicket', by: 'Chris', ticket: { no: 5012, dir: 'IN', commodity: 'Corn', cropYear: 2026, field: 'TEST Share Quarter', gross: 80000, tare: 24000, moisture: 17.2, tw: 56, truck: 'Cart 2', timeIn: '2026-11-12T14:00:00Z', timeOut: '2026-11-12T14:20:00Z' } });
+  assert.ok(j.ok, j.error); assert.equal(j.wetBu, 1000);
+  assert.match(call({ action: 'addManualTicket', by: 'Chris', ticket: { no: 5012, dir: 'IN', commodity: 'Corn', cropYear: 2026, field: 'TEST Share Quarter', gross: 80000, tare: 24000 } }).error, /already in the system/);
+  assert.match(call({ action: 'addManualTicket', by: 'Chris', ticket: { no: 5013, dir: 'IN', commodity: 'Corn', cropYear: 2026, field: 'X', gross: 100, tare: 200 } }).error, /Gross must be more than tare/);
+  const d = call({ action: 'officeData' });
+  const t = d.tickets.find(x => x.TicketNo === 5012);
+  assert.equal(t.ManualWeight, true); assert.equal(t.PaperTicket, 5012); assert.match(t.Remarks, /paper ticket/);
+  assert.deepEqual(d.splits.filter(x => x.TicketNo === 5012).map(x => [x.Owner, x.WetBu]), [['Roenbaugh Farms', 500], ['TEST Landlord A', 500]]);
+  assert.equal(call({ action: 'lists' }).settings.NextTicketNo, before);
+  assert.equal(d.editLog.filter(x => x.TicketNo === 5012).length, 1);
+});
+ok('edit ticket: wrong field fixed, split redone, logged; reason and name required', () => {
+  assert.match(call({ action: 'editTicket', ticketNo: 5012, by: 'Chris', reason: '', changes: { Field: 'TEST Home Place' } }).error, /why/);
+  let j = call({ action: 'editTicket', ticketNo: 5012, by: 'Chris', reason: 'Fat finger: was Home Place', changes: { Field: 'TEST Home Place', GrossLb: 80056 } });
+  assert.ok(j.ok, j.error); assert.equal(j.changed, 2);
+  const d = call({ action: 'officeData' });
+  const t = d.tickets.find(x => x.TicketNo === 5012);
+  assert.equal(t.Field, 'TEST Home Place'); assert.equal(t.NetLb, 56056); assert.equal(t.WetBu, 1001);
+  assert.deepEqual(d.splits.filter(x => x.TicketNo === 5012).map(x => x.Owner), ['Roenbaugh Farms']);
+  assert.match(d.editLog.filter(x => x.TicketNo === 5012).pop().Changes, /Field: TEST Share Quarter → TEST Home Place; Gross: 80000 → 80056/);
+});
+ok('edit ticket: outbound moved to another buyer/contract re-applies; void drops it everywhere', () => {
+  call({ action: 'saveContract', isNew: true, contract: { ContractNo: 'B-9', Buyer: 'TEST Buyer B', Commodity: 'Corn', CropYear: 2026, Bushels: 5000 } });
+  call({ action: 'saveTickets', tickets: [{ no: 900777, dir: 'OUT', status: 'Closed', commodity: 'Corn', cropYear: 2026, buyer: 'The Andersons', contractNo: 'P-1', truck: 'T', gross: 84000, tare: 28000, net: 56000, wetBu: 1000, timeOut: '2026-11-12T16:00:00Z' }] });
+  let d = call({ action: 'officeData' });
+  assert.equal(d.allocations.find(a => a.TicketNo === 900777).ContractNo, 'P-1');
+  let j = call({ action: 'editTicket', ticketNo: 900777, by: 'Chris', reason: 'Wrong customer', changes: { Buyer: 'TEST Buyer B' } });
+  assert.ok(j.ok, j.error); assert.match(j.changes.join(), /P-1 → TBD/);
+  d = call({ action: 'officeData' });
+  assert.equal(d.allocations.filter(a => a.TicketNo === 900777).length, 0);
+  j = call({ action: 'editTicket', ticketNo: 900777, by: 'Chris', reason: 'Put on B-9', changes: { ContractNo: 'B-9' } });
+  d = call({ action: 'officeData' });
+  assert.equal(d.allocations.find(a => a.TicketNo === 900777).ContractNo, 'B-9');
+  call({ action: 'editTicket', ticketNo: 900777, by: 'Chris', reason: 'Duplicate', changes: { Status: 'Void' } });
+  d = call({ action: 'officeData' });
+  assert.equal(d.allocations.filter(a => a.TicketNo === 900777).length, 0);
+  assert.equal(d.tickets.find(x => x.TicketNo === 900777).Status, 'Void');
+});
+ok('discount schedule: save a commodity schedule; field legal saved', () => {
+  let j = call({ action: 'saveCommodity', isNew: false, commodity: { Commodity: 'Corn', LbPerBu: 56, StdMoisturePct: 15.5, ShrinkMethod: 'PerPoint', ShrinkPerPoint: 1.4, HandlingShrinkPct: 0.5, DryingPerPoint: 0.03, BaseTestWeight: 54, TWDiscountPerLb: 0.02 } });
+  assert.ok(j.ok, j.error);
+  assert.match(call({ action: 'saveCommodity', isNew: false, commodity: { Commodity: 'Corn', LbPerBu: 56, ShrinkMethod: 'PerPoint' } }).error, /shrink % per point/);
+  const c = call({ action: 'officeData' }).commodities.find(x => x.Commodity === 'Corn');
+  assert.equal(c.ShrinkMethod, 'PerPoint'); assert.equal(c.HandlingShrinkPct, 0.5);
+  assert.ok(call({ action: 'saveField', isNew: true, field: { Field: 'Legal Test', Acres: 80, Section: '12', Township: '26S', Range: '17W', County: 'Kiowa' } }).ok);
+  const f = call({ action: 'officeData' }).fields.find(x => x.Field === 'Legal Test');
+  assert.deepEqual([f.Section, f.Township, f.Range, f.County, f.Acres], ['12', '26S', '17W', 'Kiowa', 80]);
 });
 ok('customers: add, refuse duplicate (any case), edit, type required', () => {
   assert.ok(call({ action: 'saveCustomer', isNew: true, customer: { Customer: 'Smith Land LLC', Type: 'Landlord', Phone: '620-555-0101' } }).ok);

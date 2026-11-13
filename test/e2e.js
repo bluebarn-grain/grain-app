@@ -53,6 +53,7 @@ const BASE = 'http://localhost:8123/';
 
   step('truck 2 rolls on loaded and weighs out');
   await page.click('#newT'); await page.click('.yrow >> text=22 Friesen'); await page.click('#sLoad'); await stable();
+  await page.fill('#bol', '20451'); await page.dispatchEvent('#bol', 'input'); await page.waitForTimeout(200);   // buyer's BOL is typed in
   await page.click('#wOut'); await page.waitForTimeout(500); console.log('   yard:', await yard());
 
   step('inbound load 1 dumps and weighs out empty');
@@ -62,6 +63,7 @@ const BASE = 'http://localhost:8123/';
   step('internet goes down; truck 1 loads and weighs out');
   await page.request.get(BASE + '__down');
   await page.click('.yrow >> text=196 Triple 8'); await page.click('#sLoad'); await stable();
+  await page.fill('#bol', '1027262'); await page.dispatchEvent('#bol', 'input'); await page.waitForTimeout(200);
   await page.click('#wOut');
   await page.waitForFunction(() => /Offline/.test(document.getElementById('pNet').textContent), null, { timeout: 40000 });
   console.log('   pill:', await why('#pNet'));

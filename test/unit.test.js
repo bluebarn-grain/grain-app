@@ -34,7 +34,7 @@ ok('backend saves tickets and splits 50/50', () => {
 });
 ok('backend is safe to resend (no duplicates)', () => { be.call({ action: 'saveTickets', key: 'k', tickets: [out1, in1] }); assert.equal(ss.sheets.Tickets.getLastRow(), 3); });
 ok('backend flags field with no shares as UNASSIGNED', () => { const j = be.call({ action: 'saveTickets', key: 'k', tickets: [in2] }); assert.equal(j.warnings.length, 1); assert.equal(ss.sheets.TicketSplits.data.at(-1)[1], 'UNASSIGNED'); });
-ok('backend bumps next ticket and BOL numbers', () => { const j = be.call({ action: 'lists', key: 'k' }); assert.equal(j.settings.NextTicketNo, 900004); assert.equal(j.settings.NextBOLNo, 9000002); });
+ok('backend bumps the next ticket number; BOLs are typed in, so no BOL counter', () => { const j = be.call({ action: 'lists', key: 'k' }); assert.equal(j.settings.NextTicketNo, 900004); assert.ok(!(Number(j.settings.NextBOLNo) > 9000001)); });
 ok('backend counts delivered bushels on contract', () => { const j = be.call({ action: 'lists', key: 'k' }); assert.equal(j.contracts.find(c => c.ContractNo === 'TEST-C1').DeliveredBu, 1071.43); });
 ok('backend added new columns to Tickets header', () => { const h = ss.sheets.Tickets.data[0]; ['BOLNo', 'LoadNo', 'WetBu', 'Buyer'].forEach(c => assert(h.includes(c), c)); });
 console.log(`\n${n} passed`);

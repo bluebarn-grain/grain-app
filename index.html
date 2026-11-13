@@ -115,7 +115,7 @@
       </div>
 
       <div class="form">
-        <div class="f" data-dir="OUT"><label for="bol">Bill of lading #</label><input id="bol" readonly></div>
+        <div class="f" data-dir="OUT"><label for="bol">Buyer's bill of lading #</label><input id="bol" autocomplete="off" inputmode="text" autocapitalize="characters"></div>
         <div class="f"><label for="op">Weighmaster</label><input id="op" autocomplete="off"></div>
         <div class="f full"><label for="rm">Remarks</label><input id="rm" autocomplete="off"></div>
       </div>
@@ -139,16 +139,19 @@
     <div class="obar">
       <div class="tabs" role="tablist">
         <button type="button" data-tab="contracts" aria-pressed="true">Contracts</button>
+        <button type="button" data-tab="tickets" aria-pressed="false">Tickets</button>
         <button type="button" data-tab="customers" aria-pressed="false">Customers</button>
         <button type="button" data-tab="fieldsetup" aria-pressed="false">Fields</button>
         <button type="button" data-tab="fields" aria-pressed="false">Field report</button>
         <button type="button" data-tab="inventory" aria-pressed="false">Inventory</button>
         <button type="button" data-tab="landlord" aria-pressed="false">Landlord grain</button>
+        <button type="button" data-tab="discounts" aria-pressed="false">Discounts</button>
         <button type="button" data-tab="writeoffs" aria-pressed="false">Write-offs</button>
         <button type="button" data-tab="adjustments" aria-pressed="false">Adjustments</button>
       </div>
       <div class="ofilters">
         <label for="oYear" class="sr">Crop year</label><select id="oYear"></select>
+        <label for="oField" class="sr">Field</label><select id="oField"></select>
         <button class="ghost" type="button" id="oPrint">Print</button>
         <button class="ghost" type="button" id="oRefresh">Refresh</button>
       </div>
@@ -182,6 +185,61 @@
       <span class="hint" id="cShipped"></span>
       <div class="footbtns"><button class="ghost" type="button" id="cCancel">Cancel</button><button class="big small" type="button" id="cSave">Save</button></div>
     </div>
+  </form>
+</dialog>
+
+<dialog id="ticketDlg">
+  <form method="dialog">
+    <h2 id="tTitle">Ticket</h2>
+    <p class="hint" id="tIntro"></p>
+    <div class="form">
+      <div class="f"><label for="tNo" id="tNoLbl">Ticket #</label><input id="tNo" inputmode="numeric" autocomplete="off"></div>
+      <div class="f"><label for="tDir">In / out</label><select id="tDir"><option value="IN">Inbound (from field)</option><option value="OUT">Outbound (to buyer)</option></select></div>
+      <div class="f"><label for="tIn">Weighed in</label><input id="tIn" type="datetime-local"></div>
+      <div class="f"><label for="tOut">Weighed out</label><input id="tOut" type="datetime-local"></div>
+      <div class="f"><label for="tComm">Commodity</label><select id="tComm"></select></div>
+      <div class="f"><label for="tYear">Crop year</label><select id="tYear"></select></div>
+      <div class="f" data-tdir="IN"><label for="tField">Field</label><select id="tField"></select></div>
+      <div class="f" data-tdir="IN"><label for="tLoad">Load #</label><input id="tLoad" inputmode="numeric"></div>
+      <div class="f" data-tdir="OUT"><label for="tBuyer">Buyer</label><select id="tBuyer"></select></div>
+      <div class="f" data-tdir="OUT"><label for="tContract">Contract</label><select id="tContract"></select></div>
+      <div class="f" data-tdir="OUT"><label for="tBol">Buyer's BOL #</label><input id="tBol" autocomplete="off" autocapitalize="characters"></div>
+      <div class="f"><label for="tTruck">Truck</label><input id="tTruck" autocomplete="off"></div>
+      <div class="f"><label for="tDriver">Driver</label><input id="tDriver" autocomplete="off"></div>
+      <div class="f"><label for="tGross">Gross lb</label><input id="tGross" inputmode="numeric"></div>
+      <div class="f"><label for="tTare">Tare lb</label><input id="tTare" inputmode="numeric"></div>
+      <div class="f" data-tdir="IN"><label for="tM">Moisture %</label><input id="tM" inputmode="decimal"></div>
+      <div class="f" data-tdir="IN"><label for="tTw">Test weight</label><input id="tTw" inputmode="decimal"></div>
+      <div class="f" data-tdir="IN"><label for="tFm">FM %</label><input id="tFm" inputmode="decimal"></div>
+      <div class="f" data-tdir="IN"><label for="tTemp">Temp °F</label><input id="tTemp" inputmode="decimal"></div>
+      <div class="f full"><label for="tRm">Remarks</label><input id="tRm" autocomplete="off"></div>
+      <div class="f" id="tReasonBox"><label for="tReason">Why is it being changed?</label><input id="tReason" autocomplete="off" placeholder="e.g. wrong field, fat finger"></div>
+      <div class="f"><label for="tBy">Entered by</label><input id="tBy" autocomplete="off"></div>
+    </div>
+    <div class="bookline big2" id="tCalc"></div>
+    <div class="hint" id="tHistory"></div>
+    <p class="hint" id="tMsg"></p>
+    <div class="foot"><div class="rowbtns"><button class="ghost bad" type="button" id="tVoid">Void ticket</button><button class="ghost" type="button" id="tPrint">Print ticket</button></div><div class="footbtns"><button class="ghost" type="button" id="tCancel">Cancel</button><button class="big small" type="button" id="tSave">Save</button></div></div>
+  </form>
+</dialog>
+
+<dialog id="commDlg">
+  <form method="dialog">
+    <h2 id="dTitle2">Discount schedule</h2>
+    <div class="form">
+      <div class="f"><label for="dName">Commodity</label><input id="dName" autocomplete="off"></div>
+      <div class="f"><label for="dLb">Lb per bushel</label><input id="dLb" inputmode="decimal"></div>
+      <div class="f"><label for="dStd">Standard (base) moisture %</label><input id="dStd" inputmode="decimal"></div>
+      <div class="f"><label for="dMethod">Moisture shrink method</label><select id="dMethod"><option value="Water">Water shrink (take out only the water)</option><option value="PerPoint">Shrink % per point over standard</option></select></div>
+      <div class="f" id="dPPBox"><label for="dPP">Shrink % per point</label><input id="dPP" inputmode="decimal" placeholder="e.g. 1.4"></div>
+      <div class="f"><label for="dHand">Handling shrink % (when over standard)</label><input id="dHand" inputmode="decimal" placeholder="e.g. 0.5"></div>
+      <div class="f"><label for="dDry">Drying charge $/bu per point</label><input id="dDry" inputmode="decimal" placeholder="e.g. 0.03"></div>
+      <div class="f"><label for="dTW">Base test weight lb</label><input id="dTW" inputmode="decimal" placeholder="e.g. 54"></div>
+      <div class="f"><label for="dTWd">Test weight discount $/bu per lb under</label><input id="dTWd" inputmode="decimal" placeholder="e.g. 0.02"></div>
+      <div class="f full"><label for="dNotes">Notes</label><input id="dNotes" autocomplete="off"></div>
+    </div>
+    <p class="hint" id="dMsg"></p>
+    <div class="foot"><span></span><div class="footbtns"><button class="ghost" type="button" id="dCancel">Cancel</button><button class="big small" type="button" id="dSave">Save</button></div></div>
   </form>
 </dialog>
 
@@ -233,6 +291,10 @@
       <div class="f"><label for="fAcres">Acres</label><input id="fAcres" inputmode="decimal"></div>
       <div class="f"><label for="fOps">Operations Center name</label><input id="fOps" autocomplete="off"></div>
       <div class="f"><label for="fUnit">Insurance unit</label><input id="fUnit" autocomplete="off"></div>
+      <div class="f"><label for="fCounty">County</label><input id="fCounty" autocomplete="off"></div>
+      <div class="f"><label for="fSec">Section</label><input id="fSec" autocomplete="off" inputmode="numeric"></div>
+      <div class="f"><label for="fTwp">Township (e.g. 26S)</label><input id="fTwp" autocomplete="off" autocapitalize="characters"></div>
+      <div class="f"><label for="fRng">Range (e.g. 17W)</label><input id="fRng" autocomplete="off" autocapitalize="characters"></div>
       <div class="f"><label for="fFarm">FSA farm #</label><input id="fFarm" autocomplete="off" inputmode="numeric"></div>
       <div class="f"><label for="fTract">FSA tract #</label><input id="fTract" autocomplete="off" inputmode="numeric"></div>
       <div class="f full"><label for="fNotes">Notes</label><input id="fNotes" autocomplete="off"></div>
@@ -303,7 +365,6 @@
       <div class="f"><label for="sStation">Station name</label><input id="sStation" value="Scale house"></div>
       <div class="f"><label for="sOp">Default weighmaster</label><input id="sOp"></div>
       <div class="f"><label for="sTicket">Next ticket #</label><input id="sTicket" inputmode="numeric"></div>
-      <div class="f"><label for="sBol">Next bill of lading #</label><input id="sBol" inputmode="numeric"></div>
       <div class="f"><label for="sBaud">Serial baud rate</label><select id="sBaud"><option>1200</option><option>2400</option><option>4800</option><option selected>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option></select></div>
       <div class="f"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="sTest" checked> Test mode (prints TEST on tickets)</label></div>
       <div class="f full"><label class="chk"><input type="checkbox" id="sSim"> Simulator (fake scale and moisture tester)</label></div>

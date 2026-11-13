@@ -6,7 +6,7 @@
 const R = window.BBR;
 const $ = id => document.getElementById(id);
 let A;                                  // the scale app's helpers (window.BBG_APP)
-const O = { pricingNo: null, data: null, tab: 'contracts', year: '', open: {}, busy: false, adjType: '', contract: null, customer: null, field: null, shareRows: [] };
+const O = { fieldPick: '', tq: '', tdir: '', tvoid: false, ticket: null, comm: null, pricingNo: null, data: null, tab: 'contracts', year: '', open: {}, busy: false, adjType: '', contract: null, customer: null, field: null, shareRows: [] };
 
 const n0 = v => A.fmt0(v), n2 = v => A.fmt2(v), e = v => A.esc(v);
 const day = v => { if (!v) return ''; const d = new Date(v); return isNaN(d) ? '' : `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`; };
@@ -39,7 +39,7 @@ function status(msg) {
   const d = O.data;
   $('oStatus').textContent = msg || (d ? `Updated ${new Date(d.at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` + (testMode() ? ' · TEST MODE: test tickets included' : '') : '');
 }
-const D = () => O.data || { tickets: [], splits: [], allocations: [], adjustments: [], purchases: [], pricing: [], contracts: [], customers: [], fields: [], shares: [], commodities: [], settings: {} };
+const D = () => O.data || { editLog: [], tickets: [], splits: [], allocations: [], adjustments: [], purchases: [], pricing: [], contracts: [], customers: [], fields: [], shares: [], commodities: [], settings: {} };
 function years() {
   const ys = new Set();
   D().tickets.forEach(t => t.CropYear && ys.add(String(t.CropYear)));
@@ -64,9 +64,12 @@ function render() {
   const ys = years();
   $('oYear').innerHTML = [['', 'All crop years'], ...ys.map(y => [y, y])].map(([v, l]) => `<option value="${v}"${String(v) === String(O.year) ? ' selected' : ''}>${l}</option>`).join('');
   document.querySelectorAll('#officeView .tabs button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === O.tab)));
-  $('oYear').hidden = O.tab === 'adjustments' || O.tab === 'customers';
+  $('oYear').hidden = ['adjustments', 'customers', 'discounts'].includes(O.tab);
+  const fnames = [...new Set(D().tickets.filter(t => t.Direction === 'IN' && t.Field).map(t => t.Field).concat(D().fields.map(f => f.Field)))].sort((a, b) => a.localeCompare(b));
+  $('oField').innerHTML = [['', 'All fields'], ...fnames.map(f => [f, f])].map(([v, l]) => `<option value="${e(v)}"${v === O.fieldPick ? ' selected' : ''}>${e(l)}</option>`).join('');
+  $('oField').hidden = O.tab !== 'fields';
   status();
-  $('oBody').innerHTML = ({ contracts, customers, fieldsetup, fields, inventory, landlord, writeoffs, adjustments })[O.tab]();
+  $('oBody').innerHTML = ({ contracts, tickets, customers, fieldsetup, fields, inventory, landlord, discounts, writeoffs, adjustments })[O.tab]();
   wire();
 }
 
@@ -226,6 +229,183 @@ async function saveContract() {
 }
 const msg = (id, t) => { $(id).textContent = t; };
 
+// ---------- tickets: paper tickets and fixing mistakes ----------
+const localDT = v => { if (!v) return ''; const d = new Date(v); if (isNaN(d)) return ''; const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
+const isoOf = v => v ? new Date(v).toISOString() : '';
+function tickets() {
+  const q = O.tq.trim().toLowerCase();
+  const all = D().tickets.filter(t => (!O.year || String(t.CropYear) === String(O.year)) && (!O.tdir || t.Direction === O.tdir) && (O.tvoid || t.Status !== 'Void') && (testMode() || !(t.TestTicket === true || String(t.TestTicket).toUpperCase() === 'TRUE')))
+    .filter(t => !q || [t.TicketNo, t.Truck, t.Field, t.Buyer, t.ContractNo, t.BOLNo, t.Driver].some(v => String(v || '').toLowerCase().includes(q)))
+    .sort((a, b) => new Date(b.DateTime) - new Date(a.DateTime) || Number(b.TicketNo) - Number(a.TicketNo));
+  const rows = all.slice(0, 300);
+  const edited = {}; (D().editLog || []).forEach(x => { if (x.Reason !== 'Typed in from paper ticket') edited[String(x.TicketNo)] = true; });
+  return `<div class="ohead"><h2>Tickets</h2><button class="big small" type="button" id="tNew">Add paper ticket</button></div>
+    <div class="ofilters"><input id="tq" placeholder="Search ticket #, truck, field, buyer, BOL…" value="${e(O.tq)}" style="max-width:340px">
+      <select id="tdirSel"><option value="">In and out</option><option value="IN"${O.tdir === 'IN' ? ' selected' : ''}>Inbound</option><option value="OUT"${O.tdir === 'OUT' ? ' selected' : ''}>Outbound</option></select>
+      <label class="chk"><input type="checkbox" id="tvoid"${O.tvoid ? ' checked' : ''}> Show voided</label></div>
+    ${rows.length ? `<div class="tblwrap"><table><thead><tr><th>Ticket</th><th>Date / time</th><th>In/out</th><th>Field / buyer · contract</th><th>Truck</th><th>BOL</th><th class="n">Net lb</th><th class="n">Bushels</th><th class="n">Moist</th><th></th></tr></thead><tbody>
+    ${rows.map(t => `<tr data-ticket="${e(t.TicketNo)}" class="${t.Status === 'Void' ? 'closed' : ''}"><td><b>${String(t.TicketNo).padStart(6, '0')}</b></td><td>${dtm(t.DateTime)}</td><td>${t.Direction === 'IN' ? 'In' : 'Out'}</td>
+      <td>${t.Direction === 'IN' ? e(t.Field) : `${e(t.Buyer)} · ${e(t.ContractNo || 'TBD')}`}</td><td>${e(t.Truck)}</td><td>${e(t.BOLNo)}</td><td class="n">${n0(t.NetLb)}</td><td class="n">${t.Status === 'Void' ? 'Void' : n2(t.WetBu)}</td><td class="n">${t.MoisturePct === '' || t.MoisturePct == null ? '' : t.MoisturePct}</td>
+      <td>${[t.ManualWeight === true || String(t.ManualWeight).toUpperCase() === 'TRUE' ? '<span class="tag">paper</span>' : '', edited[String(t.TicketNo)] ? '<span class="chip">edited</span>' : '', t.TestTicket === true || String(t.TestTicket).toUpperCase() === 'TRUE' ? '<span class="tag">test</span>' : ''].join(' ')}</td></tr>`).join('')}
+    </tbody></table></div>${all.length > rows.length ? `<p class="hint">Showing the newest 300 of ${all.length}. Search to narrow it down.</p>` : ''}` : '<div class="empty">No tickets match.</div>'}
+    <p class="hint">Tap a ticket to fix it (wrong field, customer, contract, weights, grades) or void it. Every change is kept in the EditLog tab with who, when and why. Use <b>Add paper ticket</b> for punch tickets written while the power or internet was out.</p>`;
+}
+function sel(id, items, v, blank) {
+  const list = items.map(x => Array.isArray(x) ? x : [x, x]);
+  if (v != null && v !== '' && !list.some(([k]) => String(k) === String(v))) list.push([v, v]);
+  $(id).innerHTML = (blank ? `<option value="">${e(blank)}</option>` : '') + list.map(([k, l]) => `<option value="${e(k)}"${String(k) === String(v) ? ' selected' : ''}>${e(l)}</option>`).join('');
+}
+function ticketContracts(buyer, cur) {
+  const cs = D().contracts.filter(c => c.Buyer === buyer && (c.Status !== 'Closed' || String(c.ContractNo) === String(cur))).map(c => [String(c.ContractNo), `${c.ContractNo} · ${c.Commodity} ${c.CropYear}`]);
+  sel('tContract', [...cs, ['TBD', 'To be assigned']], cur || (cs[0] ? cs[0][0] : 'TBD'));
+}
+function openTicket(no) {
+  const t = no ? D().tickets.find(x => String(x.TicketNo) === String(no)) : null;
+  O.ticket = t;
+  const dir = t ? t.Direction : 'IN';
+  $('tTitle').textContent = t ? `Ticket ${String(t.TicketNo).padStart(6, '0')}` + (t.Status === 'Void' ? ' (VOID)' : '') : 'Add paper ticket';
+  $('tIntro').textContent = t ? 'Change what was wrong and say why. Net, bushels, the owner split and the contract it applies to are redone automatically.' : 'Type in a punch ticket written while the power or internet was out. Use the number printed on the paper ticket.';
+  $('tNoLbl').textContent = t ? 'Ticket #' : 'Paper ticket #';
+  $('tNo').value = t ? t.TicketNo : ''; $('tNo').readOnly = !!t; $('tDir').value = dir; $('tDir').disabled = !!t;
+  $('tIn').value = t ? localDT(t.TimeIn || t.DateTime) : ''; $('tOut').value = t ? localDT(t.DateTime) : '';
+  $('tIn').disabled = !!t;
+  sel('tComm', commodities(), t ? t.Commodity : 'Corn');
+  const y = new Date().getFullYear(); sel('tYear', [y + 1, y, y - 1, y - 2], t ? t.CropYear : y);
+  sel('tField', D().fields.filter(f => f.Active !== false || (t && f.Field === t.Field)).map(f => f.Field).sort((a, b) => a.localeCompare(b)), t ? t.Field : '', 'Pick a field…');
+  const buyers = D().customers.filter(c => c.Type === 'Buyer').map(c => c.Customer);
+  sel('tBuyer', buyers, t ? t.Buyer : buyers[0]); ticketContracts($('tBuyer').value, t ? t.ContractNo : '');
+  const v = x => x == null ? '' : String(x);
+  $('tLoad').value = t ? v(t.LoadNo) : ''; $('tBol').value = t ? v(t.BOLNo) : ''; $('tTruck').value = t ? v(t.Truck) : ''; $('tDriver').value = t ? v(t.Driver) : '';
+  $('tGross').value = t ? v(t.GrossLb) : ''; $('tTare').value = t ? v(t.TareLb) : ''; $('tM').value = t ? v(t.MoisturePct) : ''; $('tTw').value = t ? v(t.TestWeight) : '';
+  $('tFm').value = t ? v(t.FMPct) : ''; $('tTemp').value = t ? v(t.GrainTempF) : ''; $('tRm').value = t ? v(t.Remarks) : '';
+  $('tReason').value = ''; $('tReasonBox').hidden = !t; $('tBy').value = $('tBy').value || (A.S.config && A.S.config.operator) || '';
+  $('tVoid').hidden = !t; $('tVoid').textContent = t && t.Status === 'Void' ? 'Restore ticket' : 'Void ticket'; $('tPrint').hidden = !t || t.Status === 'Void';
+  const hist = t ? (D().editLog || []).filter(x => String(x.TicketNo) === String(t.TicketNo)) : [];
+  $('tHistory').innerHTML = hist.length ? '<b>Changes</b><br>' + hist.map(x => `${dtm(x.At)} · ${e(x.By)}: ${e(x.Changes)}${x.Reason ? ' — ' + e(x.Reason) : ''}`).join('<br>') : '';
+  $('tMsg').textContent = '';
+  tDirShow(); tCalc(); $('ticketDlg').showModal();
+  if (!t) $('tNo').focus();
+}
+function tDirShow() { const dir = $('tDir').value; $('ticketDlg').querySelectorAll('[data-tdir]').forEach(el => el.hidden = el.dataset.tdir !== dir); }
+function tCalc() {
+  const g = Number($('tGross').value), tr = Number($('tTare').value);
+  const k = R.schedule(D(), $('tComm').value);
+  if (!(g > 0) || !(tr >= 0) || $('tTare').value === '') { $('tCalc').textContent = ''; return; }
+  if (g <= tr) { $('tCalc').innerHTML = '<span class="neg">Gross must be more than tare</span>'; return; }
+  const bu = (g - tr) / k.lbPerBu;
+  $('tCalc').textContent = `Net ${n0(g - tr)} lb = ${n2(bu)} bu at ${k.lbPerBu} lb/bu`;
+}
+async function saveTicket() {
+  const t = O.ticket, dir = $('tDir').value, by = $('tBy').value.trim();
+  const num = id => $(id).value.trim() === '' ? '' : Number($(id).value);
+  if (!by) return msg('tMsg', 'Enter who is entering this.');
+  if (!(num('tGross') > num('tTare'))) return msg('tMsg', 'Gross must be more than tare.');
+  if (dir === 'IN' && !$('tField').value) return msg('tMsg', 'Pick the field.');
+  $('tSave').disabled = true; msg('tMsg', 'Saving…');
+  try {
+    if (!t) {
+      if (!(num('tNo') > 0)) throw new Error('Enter the paper ticket number.');
+      if (!$('tOut').value && !$('tIn').value) throw new Error('Enter when it was weighed.');
+      const j = await A.api({ action: 'addManualTicket', by, ticket: { no: num('tNo'), dir, commodity: $('tComm').value, cropYear: Number($('tYear').value),
+        field: $('tField').value, loadNo: num('tLoad'), buyer: $('tBuyer').value, contractNo: $('tContract').value, bol: $('tBol').value.trim(),
+        truck: $('tTruck').value.trim(), driver: $('tDriver').value.trim(), gross: num('tGross'), tare: num('tTare'),
+        moisture: num('tM'), tw: num('tTw'), fm: num('tFm'), temp: num('tTemp'), remarks: $('tRm').value.trim(),
+        timeIn: isoOf($('tIn').value || $('tOut').value), timeOut: isoOf($('tOut').value || $('tIn').value), test: testMode() } });
+      A.toast(`Paper ticket ${num('tNo')} added · ${n2(j.wetBu)} bu` + (j.warnings && j.warnings.length ? ' · ' + j.warnings.join(' ') : ''), 7000);
+    } else {
+      if (!$('tReason').value.trim()) throw new Error('Say why it is being changed.');
+      const now = { Field: $('tField').value, Buyer: $('tBuyer').value, ContractNo: $('tContract').value, Commodity: $('tComm').value, CropYear: Number($('tYear').value),
+        Truck: $('tTruck').value.trim(), Driver: $('tDriver').value.trim(), BOLNo: $('tBol').value.trim(), LoadNo: num('tLoad'), GrossLb: num('tGross'), TareLb: num('tTare'),
+        MoisturePct: num('tM'), TestWeight: num('tTw'), FMPct: num('tFm'), GrainTempF: num('tTemp'), Remarks: $('tRm').value.trim() };
+      if (dir === 'IN') { delete now.Buyer; delete now.ContractNo; delete now.BOLNo; } else { delete now.Field; delete now.LoadNo; delete now.MoisturePct; delete now.TestWeight; delete now.FMPct; delete now.GrainTempF; }
+      const changes = {};
+      Object.keys(now).forEach(k => { const a = t[k] == null ? '' : String(t[k]), b = now[k] == null ? '' : String(now[k]); if (a !== b) changes[k] = now[k]; });
+      if ($('tOut').value && localDT(t.DateTime) !== $('tOut').value) changes.DateTime = isoOf($('tOut').value);
+      if (!Object.keys(changes).length) throw new Error('Nothing was changed.');
+      const j = await A.api({ action: 'editTicket', ticketNo: t.TicketNo, changes, by, reason: $('tReason').value.trim() });
+      A.toast(`Ticket ${t.TicketNo} fixed: ${j.changes.join('; ')}` + (j.warnings && j.warnings.length ? ' · ' + j.warnings.join(' ') : ''), 8000);
+    }
+    $('ticketDlg').close(); await load(true); A.refreshLists().catch(() => {});
+  } catch (err) { msg('tMsg', err.message); }
+  finally { $('tSave').disabled = false; }
+}
+async function voidTicket() {
+  const t = O.ticket; if (!t) return;
+  const restore = t.Status === 'Void';
+  if (!$('tReason').value.trim()) return msg('tMsg', `Say why it is being ${restore ? 'restored' : 'voided'}.`);
+  if (!$('tBy').value.trim()) return msg('tMsg', 'Enter who is doing this.');
+  if (!$('tVoid').classList.contains('armed')) { $('tVoid').classList.add('armed'); $('tVoid').textContent = restore ? 'Tap again to restore' : 'Tap again to void'; return; }
+  $('tVoid').classList.remove('armed');
+  try {
+    await A.api({ action: 'editTicket', ticketNo: t.TicketNo, changes: { Status: restore ? 'Closed' : 'Void' }, by: $('tBy').value.trim(), reason: $('tReason').value.trim() });
+    $('ticketDlg').close(); A.toast(`Ticket ${t.TicketNo} ${restore ? 'restored' : 'voided'}`); await load(true);
+  } catch (err) { msg('tMsg', err.message); }
+}
+function printOfficeTicket() {
+  const t = O.ticket; if (!t || !A.printTicket) return;
+  A.printTicket({ no: Number(t.TicketNo), dir: t.Direction, status: t.Status, commodity: t.Commodity, cropYear: t.CropYear, field: t.Field, loadNo: t.LoadNo, buyer: t.Buyer,
+    contractNo: t.ContractNo, rolledFrom: t.RolledFrom, truck: t.Truck, driver: t.Driver, bol: t.BOLNo, operator: t.Operator, gross: Number(t.GrossLb), tare: Number(t.TareLb),
+    net: Number(t.NetLb), wetBu: Number(t.WetBu), remarks: t.Remarks, test: t.TestTicket === true || String(t.TestTicket).toUpperCase() === 'TRUE',
+    first: { at: t.Direction === 'OUT' ? (t.TimeIn || t.DateTime) : (t.TimeIn || t.DateTime) }, second: { at: t.TimeOut || t.DateTime },
+    grade: { moisture: t.MoisturePct === '' ? null : t.MoisturePct, tw: t.TestWeight === '' ? null : t.TestWeight, fm: t.FMPct === '' ? null : t.FMPct } });
+}
+
+// ---------- discount schedules ----------
+function discounts() {
+  const cs = D().commodities.length ? D().commodities : A.L().commodities;
+  const calcComm = O.calcComm || (cs[0] && cs[0].Commodity) || 'Corn';
+  return `<div class="ohead"><h2>Discount schedules</h2><button class="big small" type="button" id="dNew">Add commodity</button></div>
+    <div class="inv">${cs.map(c => { const k = R.schedule(D(), c.Commodity); return `<div class="invcard">
+      <h3>${e(c.Commodity)}</h3>
+      <div class="ledger">
+        <span>Lb per bushel</span><span class="n">${k.lbPerBu}</span>
+        <span>Standard moisture</span><span class="n">${k.std == null ? '—' : k.std + '%'}</span>
+        <span>Moisture shrink</span><span class="n">${k.method === 'PerPoint' ? k.perPoint + '% per point' : 'water shrink'}</span>
+        <span>Handling shrink</span><span class="n">${k.handling ? k.handling + '%' : '—'}</span>
+        <span>Drying charge</span><span class="n">${k.drying ? '$' + k.drying + '/bu per point' : '—'}</span>
+        <span>Test weight</span><span class="n">${k.baseTW != null && k.twPerLb ? `$${k.twPerLb}/bu per lb under ${k.baseTW}` : '—'}</span>
+      </div>${k.notes ? `<div class="hint">${e(k.notes)}</div>` : ''}
+      <div class="rowbtns"><button class="ghost" type="button" data-comm="${e(c.Commodity)}">Change</button></div></div>`; }).join('')}</div>
+    <div class="ohead"><h2>Try the math</h2></div>
+    <div class="ofilters"><span class="hint">Commodity</span><select id="cxComm">${cs.map(c => `<option${c.Commodity === calcComm ? ' selected' : ''}>${e(c.Commodity)}</option>`).join('')}</select>
+      <span class="hint">Wet bu</span><input id="cxBu" inputmode="decimal" placeholder="Wet bushels" value="${e(O.cxBu ?? '1000')}" style="max-width:130px">
+      <span class="hint">Moisture %</span><input id="cxM" inputmode="decimal" placeholder="Moisture %" value="${e(O.cxM ?? '18')}" style="max-width:120px">
+      <span class="hint">Test wt</span><input id="cxTw" inputmode="decimal" placeholder="Test weight" value="${e(O.cxTw ?? '')}" style="max-width:120px"></div>
+    <div id="cxOut"></div>
+    <p class="hint">Dry bushels on the Field report, Inventory and Landlord grain all use these schedules. A change applies to every load already weighed, since dry bushels are worked out from each load's moisture.</p>`;
+}
+function calcShow() {
+  if (!$('cxOut')) return;
+  O.calcComm = $('cxComm').value; O.cxBu = $('cxBu').value; O.cxM = $('cxM').value; O.cxTw = $('cxTw').value;
+  const m = R.shrinkMath(D(), O.calcComm, Number(O.cxBu) || 0, O.cxM === '' ? '' : Number(O.cxM), O.cxTw === '' ? '' : Number(O.cxTw));
+  $('cxOut').innerHTML = `<div class="tblwrap"><table><tbody>${m.steps.map(([a, b]) => `<tr><td>${e(a)}</td><td>${e(b)}</td></tr>`).join('')}
+    <tr class="total"><td>Result</td><td>${n2(m.wetBu)} wet bu → <b>${n2(m.dryBu)} dry bu</b> (${m.shrinkPct}% shrink, ${n2(m.shrinkBu)} bu)${m.totalDiscount ? ` · discounts $${n2(m.totalDiscount)}` : ''}</td></tr></tbody></table></div>`;
+}
+function openComm(name) {
+  const c = name ? (D().commodities.find(x => x.Commodity === name) || A.L().commodities.find(x => x.Commodity === name)) : null;
+  O.comm = c ? c.Commodity : null;
+  const v = x => x == null ? '' : String(x);
+  $('dTitle2').textContent = c ? `${c.Commodity} discount schedule` : 'Add commodity';
+  $('dName').value = c ? c.Commodity : ''; $('dName').readOnly = !!c;
+  $('dLb').value = c ? v(c.LbPerBu) : '56'; $('dStd').value = c ? v(c.StdMoisturePct) : '';
+  const k = c ? R.schedule(D(), c.Commodity) : { method: 'Water' };
+  $('dMethod').value = k.method; $('dPP').value = c ? v(c.ShrinkPerPoint) : ''; $('dHand').value = c ? v(c.HandlingShrinkPct) : '';
+  $('dDry').value = c ? v(c.DryingPerPoint) : ''; $('dTW').value = c ? v(c.BaseTestWeight) : ''; $('dTWd').value = c ? v(c.TWDiscountPerLb) : ''; $('dNotes').value = c ? v(c.ScheduleNotes) : '';
+  $('dPPBox').hidden = $('dMethod').value !== 'PerPoint'; $('dMsg').textContent = '';
+  $('commDlg').showModal();
+}
+async function saveComm() {
+  const g = id => $(id).value.trim();
+  if (!g('dName')) return msg('dMsg', 'Enter the commodity name.');
+  $('dSave').disabled = true; msg('dMsg', 'Saving…');
+  try {
+    await A.api({ action: 'saveCommodity', isNew: !O.comm, commodity: { Commodity: g('dName'), LbPerBu: g('dLb'), StdMoisturePct: g('dStd'), ShrinkMethod: $('dMethod').value,
+      ShrinkPerPoint: g('dPP'), HandlingShrinkPct: g('dHand'), DryingPerPoint: g('dDry'), BaseTestWeight: g('dTW'), TWDiscountPerLb: g('dTWd'), ScheduleNotes: g('dNotes') } });
+    $('commDlg').close(); A.toast(`${g('dName')} schedule saved`); await load(true); A.refreshLists().catch(() => {});
+  } catch (err) { msg('dMsg', err.message); }
+  finally { $('dSave').disabled = false; }
+}
+
 // ---------- customers ----------
 function customers() {
   const cs = D().customers.slice().sort((a, b) => (a.Active === false) - (b.Active === false) || String(a.Type).localeCompare(String(b.Type)) || String(a.Customer).localeCompare(String(b.Customer)));
@@ -260,6 +440,8 @@ async function saveCustomer() {
 }
 
 // ---------- fields and splits ----------
+// Land legal, e.g. "S12-T26S-R17W, Kiowa Co."
+const legal = f => { const p = [f.Section && 'S' + e(f.Section), f.Township && 'T' + e(f.Township), f.Range && 'R' + e(f.Range)].filter(Boolean).join('-'); return [p, f.County ? e(f.County) + ' Co.' : ''].filter(Boolean).join(', '); };
 const splitYear = () => O.year || String(new Date().getFullYear());
 const sharesOf = (field, y) => D().shares.filter(s => s.Field === field && String(s.CropYear) === String(y));
 function fieldsetup() {
@@ -269,10 +451,10 @@ function fieldsetup() {
   const totAc = fs.filter(f => f.Active !== false).reduce((a, f) => a + (Number(f.Acres) || 0), 0);
   return `<div class="ohead"><h2>Fields and ${e(y)} splits</h2><button class="big small" type="button" id="fNew">New field</button></div>
     ${missing ? `<div class="banner">${missing} active field${missing === 1 ? ' has' : 's have'} no ${e(y)} split. Loads from ${missing === 1 ? 'it' : 'them'} print "SPLIT NOT SET" until it's added.</div>` : ''}
-    ${fs.length ? `<div class="tblwrap"><table><thead><tr><th>Field</th><th class="n">Acres</th><th>${e(y)} split</th><th>Insurance unit</th><th>FSA farm / tract</th></tr></thead><tbody>
+    ${fs.length ? `<div class="tblwrap"><table><thead><tr><th>Field</th><th class="n">Acres</th><th>${e(y)} split</th><th>Legal</th><th>Insurance unit</th><th>FSA farm / tract</th></tr></thead><tbody>
     ${fs.map(f => { const sh = sharesOf(f.Field, y); return `<tr data-field="${e(f.Field)}" class="${f.Active === false || String(f.Active).toUpperCase() === 'FALSE' ? 'closed' : ''}"><td><b>${e(f.Field)}</b></td><td class="n">${f.Acres ? ac(f.Acres) : '—'}</td>
-      <td>${sh.length ? sh.map(s => `${e(s.Owner)} ${Number(s.SharePct)}%`).join(', ') : '<span class="tag">No split</span>'}</td><td>${e(f.InsuranceUnit)}</td><td>${e(f.FSAFarm)}${f.FSATract ? ' / ' + e(f.FSATract) : ''}</td></tr>`; }).join('')}
-    <tr class="total"><td>Total active</td><td class="n">${ac(totAc)}</td><td colspan="3"></td></tr>
+      <td>${sh.length ? sh.map(s => `${e(s.Owner)} ${Number(s.SharePct)}%`).join(', ') : '<span class="tag">No split</span>'}</td><td>${legal(f)}</td><td>${e(f.InsuranceUnit)}</td><td>${e(f.FSAFarm)}${f.FSATract ? ' / ' + e(f.FSATract) : ''}</td></tr>`; }).join('')}
+    <tr class="total"><td>Total active</td><td class="n">${ac(totAc)}</td><td colspan="4"></td></tr>
     </tbody></table></div><p class="hint">Pick a crop year at the top to see or set that year's splits. Tap a field to change its acres, details or split.</p>` : '<div class="empty">No fields yet.</div>'}`;
 }
 function ownerOptions(cur) {
@@ -308,6 +490,7 @@ function openField(name) {
   $('fName').value = f ? f.Field : ''; $('fName').readOnly = !!f;
   $('fAcres').value = f && f.Acres !== '' && f.Acres != null ? f.Acres : '';
   $('fOps').value = f ? f.OpsCenterName || '' : ''; $('fUnit').value = f ? f.InsuranceUnit || '' : '';
+  $('fCounty').value = f ? f.County || '' : ''; $('fSec').value = f ? f.Section || '' : ''; $('fTwp').value = f ? f.Township || '' : ''; $('fRng').value = f ? f.Range || '' : '';
   $('fFarm').value = f ? f.FSAFarm || '' : ''; $('fTract').value = f ? f.FSATract || '' : ''; $('fNotes').value = f ? f.Notes || '' : '';
   $('fActive').checked = !f || !(f.Active === false || String(f.Active).toUpperCase() === 'FALSE');
   const y = Number(splitYear());
@@ -336,7 +519,8 @@ async function saveField() {
   $('fSave').disabled = true; msg('fMsg', 'Saving…');
   try {
     await A.api({ action: 'saveField', isNew: !O.field, field: { Field: name, Acres: acresTxt === '' ? '' : Number(acresTxt), OpsCenterName: $('fOps').value, InsuranceUnit: $('fUnit').value,
-      FSAFarm: $('fFarm').value, FSATract: $('fTract').value, Notes: $('fNotes').value, Active: $('fActive').checked } });
+      FSAFarm: $('fFarm').value, FSATract: $('fTract').value, Notes: $('fNotes').value, Active: $('fActive').checked,
+      County: $('fCounty').value, Section: $('fSec').value, Township: $('fTwp').value.toUpperCase(), Range: $('fRng').value.toUpperCase() } });
     if (before !== after) await A.api({ action: 'saveShares', fieldName: name, cropYear: Number($('fYear').value), shares: rows.map(r => ({ Owner: r.Owner, SharePct: Number(r.SharePct) })) });
     $('fieldDlg').close(); A.toast(`${name} saved`);
     await load(true); A.refreshLists().catch(() => {});
@@ -346,8 +530,9 @@ async function saveField() {
 
 // ---------- fields ----------
 function fields() {
-  const rows = R.fieldReport(D(), opt());
-  if (!rows.length) return `<div class="ohead"><h2>Field report</h2></div><div class="empty">No inbound loads${O.year ? ' for ' + O.year : ''} yet.</div>`;
+  const rows = R.fieldReport(D(), { ...opt(), field: O.fieldPick });
+  if (O.fieldPick) rows.forEach(r => { const k = `${r.field}|${r.commodity}|${r.cropYear}`; if (O.open[k] === undefined) O.open[k] = true; });  // one field: show its tickets
+  if (!rows.length) return `<div class="ohead"><h2>Field report${O.fieldPick ? ' — ' + e(O.fieldPick) : ''}</h2></div><div class="empty">No inbound loads${O.fieldPick ? ' from ' + e(O.fieldPick) : ''}${O.year ? ' for ' + O.year : ''} yet.</div>`;
   const groups = {};
   rows.forEach(r => { (groups[r.commodity + ' ' + r.cropYear] = groups[r.commodity + ' ' + r.cropYear] || []).push(r); });
   const anyAcres = rows.some(r => r.acres);
@@ -366,9 +551,11 @@ function fields() {
     }).join('') + `<tr class="total"><td>Total ${e(g)}</td><td></td><td class="n">${tot.loads}</td><td class="n">${n2(tot.wet)}</td><td class="n">${n2(tot.dry)}</td><td></td><td></td>${anyAcres ? `<td class="n">${tot.ac ? n0(tot.ac) : ''}</td><td></td>` : ''}</tr>`;
   }).join('');
   const std = D().commodities.map(c => `${c.Commodity} ${c.StdMoisturePct}%`).join(', ');
-  return `<div class="ohead"><h2>Field report</h2></div>
+  const fl = O.fieldPick && D().fields.find(f => f.Field === O.fieldPick);
+  return `<div class="ohead"><h2>Field report${O.fieldPick ? ' — ' + e(O.fieldPick) : ''}</h2></div>
+    ${fl ? `<p class="hint">${[legal(fl), fl.Acres ? ac(fl.Acres) + ' acres' : '', fl.InsuranceUnit ? 'Insurance unit ' + e(fl.InsuranceUnit) : '', fl.FSAFarm ? 'FSA farm ' + e(fl.FSAFarm) + (fl.FSATract ? ' tract ' + e(fl.FSATract) : '') : ''].filter(Boolean).join(' · ')}</p>` : ''}
     <div class="tblwrap"><table><thead><tr><th>Field</th><th>Crop</th><th class="n">Loads</th><th class="n">Wet bu</th><th class="n">Dry bu</th><th class="n">Moist %</th><th class="n">TW</th>${anyAcres ? '<th class="n">Acres</th><th class="n">Dry bu/ac</th>' : ''}</tr></thead><tbody>${body}</tbody></table></div>
-    <p class="hint">Tap a field for each owner's share and the tickets. Dry bushels are shrunk to standard moisture (${e(std)})${D().settings.ShrinkPerPoint ? ` at ${e(D().settings.ShrinkPerPoint)}% per point` : ''}. Moisture and test weight are weighted by bushels.${rows.some(r => r.noMoisture) ? ' * some loads have no moisture reading and are counted as dry.' : ''}${anyAcres ? '' : ' Add an Acres column to the Fields tab to see bushels per acre.'}</p>`;
+    <p class="hint">Tap a field for each owner's share and the tickets. Dry bushels use each commodity's discount schedule (see the Discounts tab). Moisture and test weight are weighted by bushels.${rows.some(r => r.noMoisture) ? ' * some loads have no moisture reading and are counted as dry.' : ''}${anyAcres ? '' : ' Add an Acres column to the Fields tab to see bushels per acre.'}</p>`;
 }
 
 // ---------- inventory ----------
@@ -579,12 +766,12 @@ function printWhenReady(a) {
 function printReport() {
   let a = $('printArea');
   if (!a) { a = document.createElement('div'); a.id = 'printArea'; document.body.appendChild(a); }
-  const names = { contracts: 'Contracts', customers: 'Customers', fieldsetup: 'Fields and splits', fields: 'Field report', inventory: 'Inventory and sales position', landlord: 'Landlord grain', writeoffs: 'Write-offs', adjustments: 'Inventory adjustments' };
+  const names = { tickets: 'Tickets', discounts: 'Discount schedules', contracts: 'Contracts', customers: 'Customers', fieldsetup: 'Fields and splits', fields: 'Field report', inventory: 'Inventory and sales position', landlord: 'Landlord grain', writeoffs: 'Write-offs', adjustments: 'Inventory adjustments' };
   const body = $('oBody').cloneNode(true);
   body.querySelectorAll('button').forEach(b => b.remove());
   body.querySelectorAll('.ohead h2').forEach(h => h.remove());
   a.className = 'report';
-  a.innerHTML = letterhead(names[O.tab] + (O.year && O.tab !== 'adjustments' ? ' — ' + O.year : ''), 'Printed ' + new Date().toLocaleString()) + body.innerHTML;
+  a.innerHTML = letterhead(names[O.tab] + (O.tab === 'fields' && O.fieldPick ? ' — ' + e(O.fieldPick) : '') + (O.year && O.tab !== 'adjustments' ? ' — ' + O.year : ''), 'Printed ' + new Date().toLocaleString()) + body.innerHTML;
   printWhenReady(a);
 }
 
@@ -596,6 +783,15 @@ function wire() {
   b.querySelectorAll('[data-cprint]').forEach(x => x.onclick = ev => { ev.stopPropagation(); printContract(x.dataset.cprint); });
   if ($('cNew')) $('cNew').onclick = () => openContract(null);
   b.querySelectorAll('[data-customer]').forEach(tr => tr.onclick = () => openCustomer(tr.dataset.customer));
+  b.querySelectorAll('[data-ticket]').forEach(tr => tr.onclick = () => openTicket(tr.dataset.ticket));
+  if ($('tNew')) $('tNew').onclick = () => openTicket(null);
+  if ($('tq')) { $('tq').oninput = () => { O.tq = $('tq').value; clearTimeout(O.tqT); O.tqT = setTimeout(() => { const pos = $('tq').selectionStart; render(); $('tq').focus(); $('tq').setSelectionRange(pos, pos); }, 300); }; }
+  if ($('tdirSel')) $('tdirSel').onchange = () => { O.tdir = $('tdirSel').value; render(); };
+  if ($('tvoid')) $('tvoid').onchange = () => { O.tvoid = $('tvoid').checked; render(); };
+  b.querySelectorAll('[data-comm]').forEach(x => x.onclick = () => openComm(x.dataset.comm));
+  if ($('dNew')) $('dNew').onclick = () => openComm(null);
+  for (const id of ['cxComm', 'cxBu', 'cxM', 'cxTw']) if ($(id)) { $(id).oninput = calcShow; $(id).onchange = calcShow; }
+  calcShow();
   if ($('kNew')) $('kNew').onclick = () => openCustomer(null);
   b.querySelectorAll('[data-field]').forEach(tr => tr.onclick = () => openField(tr.dataset.field));
   if ($('fNew')) $('fNew').onclick = () => openField(null);
@@ -618,6 +814,13 @@ function init() {
   $('pAdd').onclick = () => openPricing(null);
   $('pSave').onclick = savePricing; $('pCancel').onclick = () => $('priceDlg').close(); $('pVoid').onclick = voidPricing;
   for (const id of ['pFut', 'pBasis', 'pFees', 'pFlat', 'pBu']) $(id).addEventListener('input', pricePreview);
+  $('tSave').onclick = saveTicket; $('tCancel').onclick = () => $('ticketDlg').close(); $('tVoid').onclick = voidTicket; $('tPrint').onclick = printOfficeTicket;
+  $('tDir').onchange = () => { tDirShow(); };
+  $('tBuyer').onchange = () => ticketContracts($('tBuyer').value, '');
+  for (const id of ['tGross', 'tTare', 'tComm']) { $(id).addEventListener('input', tCalc); $(id).addEventListener('change', tCalc); }
+  $('dSave').onclick = saveComm; $('dCancel').onclick = () => $('commDlg').close();
+  $('dMethod').onchange = () => { $('dPPBox').hidden = $('dMethod').value !== 'PerPoint'; };
+  $('oField').onchange = () => { O.fieldPick = $('oField').value; render(); };
   $('kSave').onclick = saveCustomer; $('kCancel').onclick = () => $('custDlg').close();
   $('fSave').onclick = saveField; $('fCancel').onclick = () => $('fieldDlg').close();
   $('bSave').onclick = saveBuy; $('bCancel').onclick = () => $('buyDlg').close();
