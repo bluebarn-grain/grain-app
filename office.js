@@ -114,12 +114,12 @@ function printContract(no) {
   let a = $('printArea');
   if (!a) { a = document.createElement('div'); a.id = 'printArea'; document.body.appendChild(a); }
   a.className = 'report';
-  a.innerHTML = `<h1>Blue Barn Land &amp; Cattle — Contract application report</h1>
+  a.innerHTML = letterhead('Contract application report', 'Printed ' + new Date().toLocaleString()) + `
     <p><b>Contract ${e(c.ContractNo)}</b> · ${e(c.Buyer)} · ${e(c.Commodity)} ${e(c.CropYear)} · ${n0(c.Bushels)} bu${c.ShipStart ? ' · ship ' + day(c.ShipStart) + (c.ShipEnd ? ' – ' + day(c.ShipEnd) : '') : ''}<br>
     Shipped ${n2(shipped)} bu on ${tix.length} load${tix.length === 1 ? '' : 's'} · ${n2(Number(c.Bushels) - shipped)} bu left
     ${p && (p.priced || p.partial) ? `<br>Priced ${n0(p.priced)} bu${p.avgFlat != null ? ' @ ' + money(p.avgFlat) + ' avg' : ''}${p.partial ? ' · partly priced ' + n0(p.partial) + ' bu' : ''}${p.unpriced ? ' · unpriced ' + n0(p.unpriced) + ' bu' : ''}` : '<br>Not priced'}<br>
-    Weights from the Blue Barn scale. Printed ${new Date().toLocaleString()}</p>` + (tix.length ? applicationTable(tix) : '<p>No loads applied yet.</p>');
-  setTimeout(() => window.print(), 100);
+    Weights from the Blue Barn scale.</p>` + (tix.length ? applicationTable(tix) : '<p>No loads applied yet.</p>');
+  printWhenReady(a);
 }
 const money = v => v == null || v === '' ? '—' : (Number(v) < 0 ? '−$' : '$') + Math.abs(Number(v)).toFixed(4).replace(/(\.\d\d)00$/, '$1').replace(/(\.\d\d\d)0$/, '$1');
 function pricedCell(p) {
@@ -563,6 +563,19 @@ async function voidAdj(btn) {
 }
 
 // ---------------- print ----------------
+// Letterhead on every printed report: logo, business name, address, report title.
+function letterhead(title, sub) {
+  return `<div class="rhead"><img src="logo.png" alt=""><div><div class="rname">Blue Barn Land &amp; Cattle</div>
+    <div class="raddr">2949 S Road · Haviland, KS 67059 · 620-995-4245</div><div class="rtitle">${title}</div>${sub ? `<div class="rsub">${sub}</div>` : ''}</div></div>`;
+}
+// Waits for the logo so it's on the page before the print window opens.
+function printWhenReady(a) {
+  const img = a.querySelector('.rhead img');
+  const go = () => setTimeout(() => window.print(), 100);
+  if (!img || img.complete) return go();
+  img.onload = img.onerror = go;
+  setTimeout(go, 3000);
+}
 function printReport() {
   let a = $('printArea');
   if (!a) { a = document.createElement('div'); a.id = 'printArea'; document.body.appendChild(a); }
@@ -571,8 +584,8 @@ function printReport() {
   body.querySelectorAll('button').forEach(b => b.remove());
   body.querySelectorAll('.ohead h2').forEach(h => h.remove());
   a.className = 'report';
-  a.innerHTML = `<h1>Blue Barn Land &amp; Cattle — ${names[O.tab]}${O.year && O.tab !== 'adjustments' ? ' — ' + O.year : ''}</h1><p>Printed ${new Date().toLocaleString()}</p>` + body.innerHTML;
-  setTimeout(() => window.print(), 100);
+  a.innerHTML = letterhead(names[O.tab] + (O.year && O.tab !== 'adjustments' ? ' — ' + O.year : ''), 'Printed ' + new Date().toLocaleString()) + body.innerHTML;
+  printWhenReady(a);
 }
 
 // ---------------- wiring ----------------

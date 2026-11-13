@@ -169,4 +169,10 @@ select.inline{width:auto;display:inline-block;font-size:15px;padding:3px 6px;mar
   #printArea.report table{font-size:9.5pt}
   #printArea.report td,#printArea.report th{border-bottom:1px solid #999;padding:3px 6px;white-space:normal}
   #printArea.report h1{font-size:15pt;margin:0 0 6px}
+  #printArea .rhead{display:flex;align-items:center;gap:14px;border-bottom:2px solid #2b3a6b;padding-bottom:8px;margin-bottom:10px}
+  #printArea .rhead img{width:.95in;height:.95in}
+  #printArea .rname{font:700 17pt Arial,sans-serif;color:#2b3a6b}
+  #printArea .raddr{font-size:9.5pt;color:#333}
+  #printArea .rtitle{font:700 13pt Arial,sans-serif;margin-top:4px}
+  #printArea .rsub{font-size:8.5pt;color:#555}
 }
