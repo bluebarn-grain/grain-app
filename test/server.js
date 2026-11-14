@@ -4,7 +4,7 @@ const { loadBackend, testSheet } = require('./mock-gas.js');
 const ss = testSheet();
 // ROLLOVER=1: small TEST-C1 plus a later Andersons contract, to try contract roll-over.
 if (process.env.ROLLOVER) { ss.sheets.Contracts.data[1][4] = 1400; ss.sheets.Contracts.data.push(['TEST-C3', 'The Andersons', 'Corn', 2026, 5000, new Date('2027-02-01'), '', 'Open', '']); }
-const be = loadBackend(ss, { SHEET_ID: 'x', API_KEY: 'k' , ANTHROPIC_API_KEY: 'sk-test'});
+const be = loadBackend(ss, { SHEET_ID: 'x', API_KEY: 'k' , ANTHROPIC_API_KEY: 'sk-test', SCALE_KEY: 'scalekey'});
 // Stand-in for Claude reading a settlement: an Andersons-style statement for the loads the test made.
 be.ctx.__claude = body => {
   const q = body.messages[0].content.find(c => c.type === 'text').text;

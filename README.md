@@ -63,6 +63,11 @@ Tap **Office** at the top (same app, same link). It opens on **Home**: today's l
 - **Dry bushels** use water shrink to the commodity's standard moisture (Commodities tab). To use a flat shrink instead, add **ShrinkPerPoint** to Settings (e.g. 1.4 for 1.4% per point).
 - **Print** prints the report you're looking at on letter paper.
 
+## Scale PC vs office computers
+Settings → *This computer is*: **scale house** (scale screen only), **office** (office screens only, no ticket numbers or serial ports), or **both** (testing). Run `setupScaleKey` once in Apps Script and give the scale PC that key: it can only send tickets and read fields, buyers and open contracts, never the office side, prices or payments. Office computers keep the original key.
+
+New inbound trucks start with the last inbound ticket's field, commodity, crop year and weighmaster.
+
 ## Payments (settlements)
 Office → Payments → pick the buyer's settlement PDF (or photos of each page) → **Read it**. Claude reads the statement (any buyer's format), checks that the loads, bushels and dollars add up, and matches each load to your ticket by your ticket #/BOL in their "other ref", their ticket #, or date + weight + truck. Pick the ticket for any it couldn't match, then **Post settlement**. Tickets show *settled* / *paid*, and contracts show settled bushels, their-vs-our shrink, and dollars paid. Originals are saved to the Drive folder "Blue Barn Grain – Settlements". Void undoes a post.
 

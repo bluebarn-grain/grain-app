@@ -367,12 +367,13 @@
     <div class="form">
       <div class="f full"><label for="sUrl">Backend web app URL</label><input id="sUrl" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off"></div>
       <div class="f full"><label for="sKey">Backend key</label><input id="sKey" autocomplete="off"></div>
+      <div class="f full"><label for="sRole">This computer is</label><select id="sRole"><option value="scale">The scale house — scale screen only</option><option value="office">An office computer — office screens only</option><option value="both">Both (for testing)</option></select><span class="hint" id="sRoleWhy"></span></div>
       <div class="f"><label for="sStation">Station name</label><input id="sStation" value="Scale house"></div>
       <div class="f"><label for="sOp">Default weighmaster</label><input id="sOp"></div>
-      <div class="f"><label for="sTicket">Next ticket #</label><input id="sTicket" inputmode="numeric"></div>
-      <div class="f"><label for="sBaud">Serial baud rate</label><select id="sBaud"><option>1200</option><option>2400</option><option>4800</option><option selected>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option></select></div>
-      <div class="f"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="sTest" checked> Test mode (prints TEST on tickets)</label></div>
-      <div class="f full"><label class="chk"><input type="checkbox" id="sSim"> Simulator (fake scale and moisture tester)</label></div>
+      <div class="f scaleonly"><label for="sTicket">Next ticket #</label><input id="sTicket" inputmode="numeric"></div>
+      <div class="f scaleonly"><label for="sBaud">Serial baud rate</label><select id="sBaud"><option>1200</option><option>2400</option><option>4800</option><option selected>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option></select></div>
+      <div class="f scaleonly"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="sTest" checked> Test mode (prints TEST on tickets)</label></div>
+      <div class="f full scaleonly"><label class="chk"><input type="checkbox" id="sSim"> Simulator (fake scale and moisture tester)</label></div>
     </div>
     <p class="hint" id="setMsg"></p>
     <div class="foot">

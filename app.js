@@ -238,6 +238,13 @@ async function onFormEdit(e) {
   await DB.put('tickets', t);
   renderYard(); renderDetailInfo();
 }
+// Harvest goes one field at a time: a new inbound truck starts with the last inbound
+// ticket's field, commodity, crop year and weighmaster (from this PC's tickets).
+function carryInbound() {
+  const last = S.tickets.filter(x => x.dir === 'IN' && x.status !== 'Void' && x.field).sort((a, c) => String(c.createdAt).localeCompare(String(a.createdAt)))[0];
+  if (!last) return;
+  S.draft = { ...S.draft, field: last.field, commodity: last.commodity || S.draft.commodity, cropYear: last.cropYear || S.draft.cropYear, operator: last.operator || S.draft.operator };
+}
 function loadDetail() {
   const t = selTicket();
   const src = t || S.draft;
@@ -581,8 +588,18 @@ function exportTickets() {
 function render() { renderPills(); renderScale(); renderYard(); renderUnmatched(); renderDone(); renderDetailInfo(); if ($('diag').open) renderDiag(); }
 
 // ---------------- settings ----------------
+// Which screens this computer gets. A scale key always means scale only.
+const role = () => S.config.keyRole === 'scale' ? 'scale' : (S.config.role || 'both');
+function roleForm() {
+  const scaleKey = S.config.keyRole === 'scale';
+  if (scaleKey) $('sRole').value = 'scale';
+  $('sRole').disabled = scaleKey;
+  $('sRoleWhy').textContent = scaleKey ? 'This is the scale key, so this computer can only run the scale.' : '';
+  document.querySelectorAll('#settings .scaleonly').forEach(x => x.hidden = $('sRole').value === 'office');
+}
 function openSettings(first) {
   const c = S.config, k = S.counters || {};
+  $('sRole').value = role(); roleForm();
   $('setIntro').textContent = first ? 'First-time setup for this PC. The starting numbers come from the backend if it is connected; check them before saving.' : 'Changing the ticket numbers here affects the next ticket issued on this PC.';
   $('sUrl').value = c.backendUrl; $('sKey').value = c.key; $('sStation').value = c.station; $('sOp').value = c.operator;
   $('sTicket').value = k.nextTicket ?? (L().settings.NextTicketNo || '');
@@ -595,23 +612,25 @@ async function checkBackend() {
   $('setMsg').textContent = 'Checking…';
   try {
     const j = await api({ action: 'ping' });
+    S.config.keyRole = j.role || 'office'; roleForm();
     await refreshLists();
     if (!$('sTicket').value && L().settings.NextTicketNo) $('sTicket').value = L().settings.NextTicketNo;
     $('setMsg').textContent = `Connected to "${j.sheet}". ${L().customers.length} customers, ${L().fields.length} fields, ${L().contracts.length} open contracts.`;
   } catch (e) { $('setMsg').textContent = 'Could not connect: ' + e.message; Object.assign(S.config, { backendUrl: prev.backendUrl, key: prev.key }); }
 }
 async function saveSettings() {
+  const officeOnly = $('sRole').value === 'office';
   const nt = parseInt($('sTicket').value, 10);
-  if (!(nt > 0)) { $('setMsg').textContent = 'Enter the next ticket number.'; return; }
+  if (!officeOnly && !(nt > 0)) { $('setMsg').textContent = 'Enter the next ticket number.'; return; }
   const maxUsed = Math.max(0, ...S.tickets.map(t => t.no));
-  if (nt <= maxUsed) { $('setMsg').textContent = `Ticket ${pad6(maxUsed)} already exists on this PC. The next ticket must be higher.`; return; }
+  if (!officeOnly && nt <= maxUsed) { $('setMsg').textContent = `Ticket ${pad6(maxUsed)} already exists on this PC. The next ticket must be higher.`; return; }
   const wasSim = S.config.sim;
-  S.config = { ...S.config, backendUrl: $('sUrl').value.trim(), key: $('sKey').value.trim(), station: $('sStation').value.trim() || 'Scale house', operator: $('sOp').value.trim(), baud: Number($('sBaud').value), test: $('sTest').checked, sim: $('sSim').checked };
+  S.config = { ...S.config, backendUrl: $('sUrl').value.trim(), key: $('sKey').value.trim(), station: $('sStation').value.trim() || 'Scale house', operator: $('sOp').value.trim(), baud: Number($('sBaud').value), test: $('sTest').checked, sim: $('sSim').checked && !officeOnly, role: $('sRole').value };
   await DB.put('kv', S.config, 'config');
-  S.counters = { ...(S.counters || { lastLoad: 0 }), nextTicket: nt };
-  await DB.put('kv', S.counters, 'counters');
+  if (!officeOnly) { S.counters = { ...(S.counters || { lastLoad: 0 }), nextTicket: nt }; await DB.put('kv', S.counters, 'counters'); }
   if (S.config.sim && !wasSim) simStart(); if (!S.config.sim && wasSim) simStop();
   $('settings').close(); toast('Settings saved'); fillLists(); render(); loadDetail(); sync(true);
+  window.dispatchEvent(new Event('bbg-role'));
 }
 
 // ---------------- start ----------------
@@ -626,11 +645,11 @@ async function init() {
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(e => log('other', 'Offline cache: ' + e.message));
 
   $('dOut').onclick = () => { S.dir = 'OUT'; loadDetail(); renderScale(); };
-  $('dIn').onclick = () => { S.dir = 'IN'; loadDetail(); renderScale(); };
+  $('dIn').onclick = () => { S.dir = 'IN'; carryInbound(); loadDetail(); renderScale(); };
   $('wIn').onclick = weighIn; $('wOut').onclick = weighOut; $('void').onclick = voidTicket;
-  $('newT').onclick = () => { S.sel = null; render(); loadDetail(); $('truck').focus(); };
+  $('newT').onclick = () => { S.sel = null; if (S.dir === 'IN' && !S.draft.field) carryInbound(); render(); loadDetail(); $('truck').focus(); };
   $('btnPort').onclick = connectPort; $('btnSettings').onclick = () => openSettings(false);
-  $('sCheck').onclick = checkBackend; $('sSave').onclick = saveSettings; $('sCancel').onclick = () => $('settings').close();
+  $('sCheck').onclick = checkBackend; $('sRole').onchange = roleForm; $('sSave').onclick = saveSettings; $('sCancel').onclick = () => $('settings').close();
   $('sEmpty').onclick = () => { SIM.target = 26000 + Math.round(Math.random() * 250) * 20; };
   $('sLoad').onclick = () => { const t = selTicket(); SIM.target = t && t.dir === 'OUT' ? t.first.lb + 54000 + Math.round(Math.random() * 200) * 20 : 80000 + Math.round(Math.random() * 300) * 20; };
   $('sOff').onclick = () => { SIM.target = 0; };
@@ -641,13 +660,13 @@ async function init() {
   window.addEventListener('online', () => sync(true));
 
   // Hand the office screens (office.js) what they need from here.
-  window.BBG_APP = { printTicket, api, DB, S, L, toast, esc, fmt0, fmt2, dt, refreshLists, online: () => S.net === 'online', configured: () => !!(S.config.backendUrl && S.config.key) };
+  window.BBG_APP = { role, printTicket, api, DB, S, L, toast, esc, fmt0, fmt2, dt, refreshLists, online: () => S.net === 'online', configured: () => !!(S.config.backendUrl && S.config.key) };
   window.dispatchEvent(new Event('bbg-ready'));
 
+  if (S.dir === 'IN') carryInbound();
   fillLists(); loadDetail(); render();
-  if (S.config.sim) simStart();
-  reopenKnownPorts();
-  if (!S.counters) openSettings(true);
+  if (role() !== 'office') { if (S.config.sim) simStart(); reopenKnownPorts(); }
+  if (!S.config.backendUrl || (!S.counters && role() !== 'office')) openSettings(true);
   sync(true);
   setInterval(sync, 15000);
   setInterval(() => { renderPills(); renderScale(); }, 1000);

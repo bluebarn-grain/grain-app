@@ -1066,8 +1066,15 @@ function init() {
   $('fYear').onchange = loadShares; $('fCopy').onclick = copyLastYear;
   $('fAddOwner').onclick = () => { O.shareRows.push({ Owner: '', SharePct: O.shareRows.length ? Math.max(0, 100 - O.shareRows.reduce((a, r) => a + (Number(r.SharePct) || 0), 0)) : 100 }); drawShares(); };
   for (const id of ['aComm', 'aYear', 'aBu']) { $(id).addEventListener('input', adjPreview); $(id).addEventListener('change', adjPreview); }
+  applyRole();
+  window.addEventListener('bbg-role', applyRole);
+}
+// Scale-house PC: scale only. Office computers: office only. "Both" is for testing.
+function applyRole() {
+  const r = A.role();
+  $('navScale').hidden = r === 'office'; $('navOffice').hidden = r === 'scale';
   let v = 'scale'; try { v = localStorage.getItem('bbg-view') || 'scale'; } catch (_) {}
-  show(v);
+  show(r === 'both' ? v : r);
 }
 if (window.BBG_APP) init(); else window.addEventListener('bbg-ready', init, { once: true });
 })();

@@ -32,10 +32,29 @@ function switchToLive() {
   Logger.log('Now writing to: ' + SpreadsheetApp.openById(LIVE_SHEET_ID).getName());
 }
 
+/** Run once: makes a separate key for the scale-house PC. That key can only send tickets
+ *  and read what the scale needs (fields, buyers, open contracts) — no office, no money. */
+function setupScaleKey() {
+  if (!PROPS.getProperty('SCALE_KEY')) PROPS.setProperty('SCALE_KEY', Utilities.getUuid());
+  Logger.log('Scale PC key (type this into the scale PC Settings): ' + PROPS.getProperty('SCALE_KEY'));
+  Logger.log('Office key (office computers keep using this one): ' + PROPS.getProperty('API_KEY'));
+}
+
+var SCALE_ACTIONS = ['ping', 'lists', 'saveTickets'];
+// The scale only needs names and types — no emails, addresses, notes or contract emails.
+function scaleLists_(l) {
+  l.customers = l.customers.map(function (c) { return { Customer: c.Customer, Type: c.Type, Active: c.Active }; });
+  l.contracts = l.contracts.map(function (c) { var o = {}; ['ContractNo', 'Buyer', 'Commodity', 'CropYear', 'Bushels', 'ShipStart', 'ShipEnd', 'Status', 'DeliveredBu'].forEach(function (k) { o[k] = c[k]; }); return o; });
+  var keep = {}; ['NextTicketNo', 'TypicalLoadBu', 'CutoverDate'].forEach(function (k) { if (l.settings[k] !== undefined) keep[k] = l.settings[k]; });
+  l.settings = keep;
+  return l;
+}
+
 /** Shows the current key and Sheet in the log. */
 function showSettings() {
   Logger.log('SHEET_ID: ' + PROPS.getProperty('SHEET_ID'));
-  Logger.log('API_KEY: ' + PROPS.getProperty('API_KEY'));
+  Logger.log('API_KEY (office): ' + PROPS.getProperty('API_KEY'));
+  Logger.log('SCALE_KEY (scale PC): ' + (PROPS.getProperty('SCALE_KEY') || 'not made yet — run setupScaleKey'));
 }
 
 function doGet(e) { return handle_((e && e.parameter) || {}); }
@@ -49,12 +68,15 @@ function doPost(e) {
 function handle_(p) {
   var sheetId = PROPS.getProperty('SHEET_ID'), key = PROPS.getProperty('API_KEY');
   if (!sheetId || !key) return out_({ ok: false, error: 'Backend not set up. Run setupTest() in the script editor.' });
-  if (p.key !== key) return out_({ ok: false, error: 'Wrong backend key' });
+  var scaleKey = PROPS.getProperty('SCALE_KEY');
+  var role = p.key === key ? 'office' : (scaleKey && p.key === scaleKey ? 'scale' : '');
+  if (!role) return out_({ ok: false, error: 'Wrong backend key' });
+  if (role === 'scale' && SCALE_ACTIONS.indexOf(p.action) < 0) return out_({ ok: false, error: 'This computer has the scale key, so the office side is not available here.' });
   try {
     var ss = SpreadsheetApp.openById(sheetId);
     switch (p.action) {
-      case 'ping': return out_({ ok: true, sheet: ss.getName(), time: new Date().toISOString() });
-      case 'lists': return out_(merge_({ ok: true }, lists_(ss)));
+      case 'ping': return out_({ ok: true, sheet: ss.getName(), time: new Date().toISOString(), role: role });
+      case 'lists': return out_(merge_({ ok: true }, role === 'scale' ? scaleLists_(lists_(ss)) : lists_(ss)));
       case 'saveTickets': return out_(merge_({ ok: true }, saveTickets_(ss, p.tickets || [], p.station || '')));
       case 'officeData': return out_(merge_({ ok: true }, officeData_(ss)));
       case 'saveContract': return out_(merge_({ ok: true }, saveContract_(ss, p.contract || {}, !!p.isNew)));
