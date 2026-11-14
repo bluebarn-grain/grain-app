@@ -33,14 +33,20 @@ function loadBackend(ss, props) {
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     Utilities: {
       getUuid: () => 'test-key',
-      newBlob: (data, type, name) => ({ data, type, name }),
+      newBlob: (data, type, name) => ({ data, type, name, getDataAsString: () => Buffer.from(data).toString('latin1') }),
+      base64Decode: b64 => Array.from(Buffer.from(b64, 'base64')),
       formatDate: (d, tz, pat) => {
         const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23', weekday: 'long', month2: undefined }).formatToParts(d).map(x => [x.type, x.value]));
         const mon = new Intl.DateTimeFormat('en-US', { timeZone: tz, month: 'short' }).format(d);
-        return pat.replace('yyyy', p.year).replace('EEEE', p.weekday).replace('MMM', mon).replace('MM', p.month).replace('dd', p.day).replace(/\bd\b/, String(Number(p.day))).replace('HH', p.hour).replace('mm', p.minute);
+        return pat.replace('yyyy', p.year).replace('EEEE', p.weekday).replace('MMM', mon).replace('MM', p.month).replace('dd', p.day).replace(/\bd\b/, String(Number(p.day))).replace('HH', p.hour).replace('mm', p.minute).replace('ss', String(d.getSeconds()).padStart(2, '0'));
       }
     },
     MailApp: { sendEmail: m => sent.push(m) },
+    // Drive: just enough for saving uploads. UrlFetchApp: Anthropic replies come from ctx.__claude(requestBody).
+    DriveApp: (() => { const folders = {}; const mk = n => ({ name: n, files: [], createFile(b) { this.files.push(b); return { getUrl: () => 'https://drive.example/' + encodeURIComponent(b.name) }; } });
+      return { getFoldersByName: n => { let done = !folders[n]; return { hasNext: () => !done, next: () => { done = true; return folders[n]; } }; }, createFolder: n => (folders[n] = mk(n)), _folders: folders }; })(),
+    UrlFetchApp: { fetchAll: reqs => reqs.map(r => { const body = JSON.parse(r.payload); const out = ctx.__claude(body);
+      return { getResponseCode: () => out.code || 200, getContentText: () => JSON.stringify(out.code ? { error: { message: out.error } } : { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: body.tool_choice.name, input: out }] }) }; }) },
     Logger: { log: () => {} },
     console, Date, JSON, Math, Number, String, Array, Object
   };

@@ -6,7 +6,7 @@
 const R = window.BBR;
 const $ = id => document.getElementById(id);
 let A;                                  // the scale app's helpers (window.BBG_APP)
-const O = { home: true, fieldPick: '', tq: '', tdir: '', tvoid: false, ticket: null, comm: null, pricingNo: null, data: null, tab: 'home', year: '', open: {}, busy: false, adjType: '', contract: null, customer: null, field: null, shareRows: [] };
+const O = { read: null, payBuyer: '', home: true, fieldPick: '', tq: '', tdir: '', tvoid: false, ticket: null, comm: null, pricingNo: null, data: null, tab: 'home', year: '', open: {}, busy: false, adjType: '', contract: null, customer: null, field: null, shareRows: [] };
 
 const n0 = v => A.fmt0(v), n2 = v => A.fmt2(v), e = v => A.esc(v);
 const day = v => { if (!v) return ''; const d = new Date(v); return isNaN(d) ? '' : `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`; };
@@ -42,7 +42,7 @@ function status(msg) {
   const bTxt = !d ? '' : !bl ? ' · No backups yet' : ` · Last backup ${new Date(bl.At).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` + (bAge > 36 ? ' — OVERDUE, check the backup' : '');
   $('oStatus').textContent = msg || (d ? `Updated ${new Date(d.at).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` + bTxt + (testMode() ? ' · TEST MODE: test tickets included' : '') : '');
 }
-const D = () => O.data || { editLog: [], tickets: [], splits: [], allocations: [], adjustments: [], purchases: [], pricing: [], contracts: [], customers: [], fields: [], shares: [], commodities: [], settings: {} };
+const D = () => O.data || { settlements: [], settlementLines: [], editLog: [], tickets: [], splits: [], allocations: [], adjustments: [], purchases: [], pricing: [], contracts: [], customers: [], fields: [], shares: [], commodities: [], settings: {} };
 function years() {
   const ys = new Set();
   D().tickets.forEach(t => t.CropYear && ys.add(String(t.CropYear)));
@@ -67,12 +67,12 @@ function render() {
   const ys = years();
   $('oYear').innerHTML = [['', 'All crop years'], ...ys.map(y => [y, y])].map(([v, l]) => `<option value="${v}"${String(v) === String(O.year) ? ' selected' : ''}>${l}</option>`).join('');
   document.querySelectorAll('#officeView .tabs button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === O.tab)));
-  $('oYear').hidden = ['adjustments', 'customers', 'discounts'].includes(O.tab);
+  $('oYear').hidden = ['adjustments', 'customers', 'discounts'].includes(O.tab) || (O.tab === 'payments' && !!O.read);
   const fnames = [...new Set(D().tickets.filter(t => t.Direction === 'IN' && t.Field).map(t => t.Field).concat(D().fields.map(f => f.Field)))].sort((a, b) => a.localeCompare(b));
   $('oField').innerHTML = [['', 'All fields'], ...fnames.map(f => [f, f])].map(([v, l]) => `<option value="${e(v)}"${v === O.fieldPick ? ' selected' : ''}>${e(l)}</option>`).join('');
   $('oField').hidden = O.tab !== 'fields';
   status();
-  $('oBody').innerHTML = ({ home, contracts, tickets, customers, fieldsetup, fields, inventory, landlord, discounts, writeoffs, adjustments })[O.tab]();
+  $('oBody').innerHTML = ({ home, contracts, payments, tickets, customers, fieldsetup, fields, inventory, landlord, discounts, writeoffs, adjustments })[O.tab]();
   wire();
 }
 
@@ -104,12 +104,18 @@ function contracts() {
     <p class="hint">Tap a contract to see every ticket applied to it (application report), print it, or edit the contract and its pricing. Filled and closed contracts don't show at the scale.</p>` : '<div class="empty">No contracts yet. Tap New contract to add one.</div>'}`;
 }
 const dtm = v => { if (!v) return ''; const d = new Date(v); return isNaN(d) ? '' : `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()} ${d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`; };
+function payChip(x) {
+  if (!x) return '';
+  const part = x.pct < 99.5 ? ` ${Math.round(x.pct)}%` : '';
+  return x.paid ? `<span class="badge">paid${part}</span>` : `<span class="badge pick">settled${part}</span>`;
+}
 function applicationTable(tix) {
+  const pay = R.settlementStatus(D(), { includeTest: true }).byTicket;
   const tot = tix.reduce((a, t) => ({ gross: a.gross + t.gross, tare: a.tare + t.tare, net: a.net + t.net, bu: a.bu + t.bu }), { gross: 0, tare: 0, net: 0, bu: 0 });
-  return `<div class="tblwrap"><table><thead><tr><th>Ticket</th><th>Date / time</th><th>Truck</th><th>BOL</th><th class="n">Gross lb</th><th class="n">Tare lb</th><th class="n">Net lb</th><th class="n">Bushels</th><th class="n">Running bu</th></tr></thead><tbody>
+  return `<div class="tblwrap"><table><thead><tr><th>Ticket</th><th>Date / time</th><th>Truck</th><th>BOL</th><th class="n">Gross lb</th><th class="n">Tare lb</th><th class="n">Net lb</th><th class="n">Bushels</th><th class="n">Running bu</th><th>Settled</th></tr></thead><tbody>
     ${tix.map(t => `<tr><td>${String(t.no).padStart(6, '0')}${t.test ? ' <span class="tag">test</span>' : ''}${t.rolledFrom ? ` <span class="hint">(from ${e(t.rolledFrom)})</span>` : ''}</td><td>${dtm(t.at)}</td><td>${e(t.truck)}</td><td>${e(t.bol)}</td>
-      <td class="n">${n0(t.gross)}</td><td class="n">${n0(t.tare)}</td><td class="n">${n0(t.net)}</td><td class="n">${n2(t.bu)}</td><td class="n">${n2(t.running)}</td></tr>`).join('')}
-    <tr class="total"><td>Total · ${tix.length} load${tix.length === 1 ? '' : 's'}</td><td></td><td></td><td></td><td class="n">${n0(tot.gross)}</td><td class="n">${n0(tot.tare)}</td><td class="n">${n0(tot.net)}</td><td class="n">${n2(tot.bu)}</td><td></td></tr>
+      <td class="n">${n0(t.gross)}</td><td class="n">${n0(t.tare)}</td><td class="n">${n0(t.net)}</td><td class="n">${n2(t.bu)}</td><td class="n">${n2(t.running)}</td><td>${payChip(pay[String(t.no)]) || '<span class="hint">—</span>'}</td></tr>`).join('')}
+    <tr class="total"><td>Total · ${tix.length} load${tix.length === 1 ? '' : 's'}</td><td></td><td></td><td></td><td class="n">${n0(tot.gross)}</td><td class="n">${n0(tot.tare)}</td><td class="n">${n0(tot.net)}</td><td class="n">${n2(tot.bu)}</td><td></td><td></td></tr>
   </tbody></table></div>`;
 }
 function printContract(no) {
@@ -269,6 +275,9 @@ function home() {
   if (held > 0.5) attn.push([n0(held), `bu of landlord grain not bought yet`, 'landlord']);
   if (unpriced > 0.5) attn.push([n0(unpriced), `bu shipped with no price`, 'contracts']);
   open.filter(c => c.left >= half && c.left < half * 4).forEach(c => attn.push([n0(c.left), `bu left on ${e(c.no)} (${e(c.buyer)}) — about ${Math.max(1, Math.round(c.left / (half * 2)))} load${Math.round(c.left / (half * 2)) > 1 ? 's' : ''}`, 'contracts']));
+  const stl = R.settlementStatus(D(), o).byTicket;
+  const late = live.filter(t => t.Direction === 'OUT' && String(t.CropYear) === y && (Date.now() - new Date(t.DateTime).getTime()) / 86400000 > 21 && !(stl[String(t.TicketNo)] && stl[String(t.TicketNo)].pct >= 99.5));
+  if (late.length) attn.push([late.length, `load${late.length === 1 ? '' : 's'} shipped over 3 weeks ago, not settled`, 'payments']);
   const waiting = (A.S.tickets || []).filter(t => !t.synced && t.status !== 'Open').length;
   if (waiting) attn.push([waiting, `ticket${waiting === 1 ? '' : 's'} on this device waiting to sync`, 'scale']);
   const bl = D().backupLog && D().backupLog.length ? D().backupLog[D().backupLog.length - 1] : null;
@@ -312,6 +321,118 @@ function home() {
   </div>`;
 }
 
+// ---------- payments: read a buyer's settlement, match it to our tickets, track paid / unpaid ----------
+const buyersList = () => D().customers.filter(c => c.Type === 'Buyer').map(c => c.Customer).sort((a, b) => a.localeCompare(b));
+function guessBuyer(name) {
+  const n = String(name || '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\b(the|inc|llc|co|company|corp)\b/g, '').trim();
+  return buyersList().find(b => { const k = b.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\b(the|inc|llc|co|company|corp)\b/g, '').trim(); return k && n && (n.includes(k) || k.includes(n)); }) || '';
+}
+function payments() {
+  if (O.read) return reviewSettlement();
+  const s = R.settlementStatus(D(), { ...opt() });
+  const sts = (D().settlements || []).slice().sort((a, b) => new Date(b.PostedAt) - new Date(a.PostedAt));
+  const money2 = v => v === '' || v == null ? '—' : '$' + n2(v);
+  return `<div class="ohead"><h2>Read a settlement</h2></div>
+    <div class="upl"><select id="payBuyer"><option value="">Buyer (it can usually tell)</option>${buyersList().map(b => `<option${b === O.payBuyer ? ' selected' : ''}>${e(b)}</option>`).join('')}</select>
+      <input type="file" id="payFile" accept="application/pdf,image/*" multiple>
+      <button class="big small" type="button" id="payRead">Read it</button><span class="hint" id="payMsg">A PDF, or photos of each page. Takes about a minute.</span></div>
+    <div class="ohead"><h2>By contract</h2></div>
+    ${s.contracts.length ? `<div class="tblwrap"><table><thead><tr><th>Contract</th><th>Buyer</th><th class="n">Loads</th><th class="n">Our bu</th><th class="n">Settled loads</th><th class="n">Their bu</th><th class="n">Diff %</th><th class="n">Settled $</th><th class="n">Paid $</th><th>Not settled</th></tr></thead><tbody>
+      ${s.contracts.map(c => { const k = 'pay:' + c.contractNo, open = O.open[k]; return `<tr data-popen="${e(c.contractNo)}"><td>${open ? '▾' : '▸'} <b>${e(c.contractNo)}</b></td><td>${e(c.buyer)}</td><td class="n">${c.loads}</td><td class="n">${n2(c.ourBu)}</td><td class="n">${Math.round(c.settledLoads * 10) / 10}</td><td class="n">${n2(c.settledBu)}</td>
+        <td class="n${c.shrinkPct != null && c.shrinkPct < -1 ? ' neg' : ''}">${c.shrinkPct == null ? '—' : c.shrinkPct.toFixed(2) + '%'}</td><td class="n">$${n2(c.amount)}</td><td class="n paid">$${n2(c.paidAmount)}</td>
+        <td>${c.unsettled.length ? `<span class="tag">${c.unsettled.length} load${c.unsettled.length === 1 ? '' : 's'}</span>` : '<span class="badge">all settled</span>'}</td></tr>` +
+        (open && c.unsettled.length ? `<tr class="sub"><td colspan="10"><div class="tblwrap"><table><thead><tr><th>Ticket</th><th>Date</th><th>Truck</th><th>BOL</th><th class="n">Bushels</th><th class="n">Settled so far</th></tr></thead><tbody>
+          ${c.unsettled.map(u => `<tr><td>${String(u.no).padStart(6, '0')}</td><td>${dtm(u.at)}</td><td>${e(u.truck)}</td><td>${e(u.bol)}</td><td class="n">${n2(u.bu)}</td><td class="n">${u.pct ? u.pct + '%' : '—'}</td></tr>`).join('')}</tbody></table></div></td></tr>` : ''); }).join('')}
+      </tbody></table></div><p class="hint">Diff % = their bushels vs ours on the loads they've settled (destination weights and grades vs your scale). Tap a contract for the loads not settled yet.</p>` : '<div class="empty">No outbound loads yet.</div>'}
+    <div class="ohead"><h2>Settlements posted</h2></div>
+    ${sts.length ? `<div class="tblwrap"><table><thead><tr><th>Posted</th><th>Buyer</th><th>Settlement</th><th>Check</th><th class="n">Loads</th><th class="n">Bushels</th><th class="n">Gross</th><th>Deductions</th><th class="n">Net / check</th><th></th></tr></thead><tbody>
+      ${sts.map(x => `<tr><td>${day(x.PostedAt)}</td><td>${e(x.Buyer)}</td><td>${e(x.StatementNo || x.Voucher)}</td><td>${x.CheckNo ? e(x.CheckNo) + ' · ' + day(x.CheckDate) : '<span class="tag">not paid yet</span>'}</td>
+        <td class="n">${e(x.LoadCount)}</td><td class="n">${n2(x.Bushels)}</td><td class="n">${money2(x.GrossAmount)}</td><td class="hint">${e(x.Deductions)}</td><td class="n paid">${money2(x.CheckAmount !== '' ? x.CheckAmount : x.NetAmount)}</td>
+        <td class="rowbtns">${x.FileUrl ? `<a class="ghost" href="${e(String(x.FileUrl).split(' ')[0])}" target="_blank" rel="noopener">Original</a>` : ''}<button class="ghost bad" type="button" data-svoid="${e(x.SettlementId)}">Void</button></td></tr>`).join('')}
+      </tbody></table></div>${s.buyers.length ? `<p class="hint">${s.buyers.map(b => `${e(b.buyer)}: ${b.settlements} settlement${b.settlements === 1 ? '' : 's'}, $${n2(b.gross)} gross, $${n2(b.deductions)} deductions, $${n2(b.paid)} paid`).join(' · ')}</p>` : ''}` : '<div class="empty">Nothing posted yet. Read a settlement above.</div>'}`;
+}
+function reviewSettlement() {
+  const r = O.read, h = r.header || {}, lines = r.lines;
+  const matchedN = lines.filter(l => l.ticketNo).length;
+  const ours = D().tickets.filter(t => t.Direction === 'OUT' && t.Status === 'Closed' && (!r.buyer || t.Buyer === r.buyer)).sort((a, b) => new Date(b.DateTime) - new Date(a.DateTime));
+  const tOpt = (l) => {
+    const ids = new Set([l.ticketNo, ...(l.candidates || [])].filter(Boolean).map(String));
+    const first = ours.filter(t => ids.has(String(t.TicketNo))), rest = ours.filter(t => !ids.has(String(t.TicketNo))).slice(0, 150);
+    const o = t => `<option value="${e(t.TicketNo)}"${String(t.TicketNo) === String(l.ticketNo) ? ' selected' : ''}>${String(t.TicketNo).padStart(6, '0')} · ${day(t.DateTime)} · ${n0(t.NetLb)} lb${t.BOLNo ? ' · BOL ' + e(t.BOLNo) : ''}</option>`;
+    return `<option value="">— no match —</option>${first.map(o).join('')}${rest.length ? '<option disabled>──────────</option>' + rest.map(o).join('') : ''}`;
+  };
+  const badge = l => !l.ticketNo ? '<span class="badge none">pick one</span>' : l.matchedBy === 'picked' ? '<span class="badge pick">picked</span>' : `<span class="badge">${e(l.matchedBy)}</span>`;
+  const gr = l => [l.test_weight != null && 'TW ' + l.test_weight, l.moisture != null && 'MO ' + l.moisture, l.fm != null && 'FM ' + l.fm, l.damage != null && 'DM ' + l.damage].filter(Boolean).join(' · ') + (l.adjustments ? ` <span class="hint">${e(l.adjustments)}</span>` : '');
+  return `<div class="ohead"><h2>Check it, then post</h2><div class="rowbtns"><button class="ghost" type="button" id="rvCancel">Discard</button><button class="big small" type="button" id="rvPost">Post settlement</button></div></div>
+    <div class="rvhead">
+      <div>Buyer<select id="rvBuyer">${['', ...buyersList()].map(b => `<option value="${e(b)}"${b === r.buyer ? ' selected' : ''}>${b ? e(b) : 'Pick the buyer…'}</option>`).join('')}</select><span class="hint">read as: ${e(h.buyer)}</span></div>
+      <div>Settlement / voucher<b>${e(h.statement_no || '—')}${h.voucher ? ' / ' + e(h.voucher) : ''}</b></div>
+      <div>Check<b>${h.check_no ? e(h.check_no) + ' · ' + e(h.check_date || '') : 'none — settled, not paid yet'}</b></div>
+      <div>Contract · price<b>${(h.contracts || []).map(c => e(c.contract_no) + (c.price ? ' @ ' + money(c.price) : '')).join(', ') || '—'}</b></div>
+      <div>Gross<b>${h.gross_amount != null ? '$' + n2(h.gross_amount) : '—'}</b></div>
+      <div>Deductions<b>${(h.deductions || []).map(d => e(d.label) + ' $' + n2(d.amount)).join(', ') || '—'}</b></div>
+      <div>Net / check<b>$${n2(h.check_amount != null ? h.check_amount : h.net_amount)}</b></div>
+      <div>Pages read<b>${r.pages}</b></div>
+    </div>
+    <div class="chips">${(r.checks || []).map(c => `<span class="chip">${c.ok ? '<span class="chk-ok">✓</span>' : '<span class="chk-bad">✗</span>'} ${e(c.check)}: ${typeof c.found === 'number' ? n2(c.found) : e(c.found)}${c.ok ? '' : ' (statement says ' + (typeof c.expected === 'number' ? n2(c.expected) : e(c.expected)) + ')'}</span>`).join('')}</div>
+    <p class="hint"><b>${matchedN} of ${lines.length}</b> loads matched to your tickets.${matchedN < lines.length ? ' Pick the ticket for the highlighted ones, or leave them unmatched.' : ''} ${(r.checks || []).some(c => !c.ok) ? '<span class="neg">Something doesn\'t add up — compare with the original before posting.</span>' : ''}${r.fileUrls && r.fileUrls[0] ? ` <a href="${e(r.fileUrls[0])}" target="_blank" rel="noopener">Open the original</a>` : ''}</p>
+    <div class="tblwrap"><table><thead><tr><th>Their ticket</th><th>Ship date</th><th>Vehicle</th><th>Other ref</th><th class="n">Weight</th><th class="n">Apply</th><th class="n">Their bu</th><th class="n">Price</th><th class="n">Amount</th><th>Grades</th><th>Our ticket</th><th class="n">Our bu</th><th class="n">Diff</th></tr></thead><tbody>
+    ${lines.map((l, i) => `<tr class="${l.ticketNo ? '' : 'nomatch'}"><td><b>${e(l.buyer_ticket)}</b></td><td>${e(l.ship_date || '')}</td><td>${e(l.vehicle || '')}</td><td>${e(l.other_ref || '')}</td>
+      <td class="n">${l.weight_lb != null ? n0(l.weight_lb) : ''}</td><td class="n">${l.apply_pct != null && l.apply_pct !== 100 ? l.apply_pct + '%' : ''}</td><td class="n">${l.net_bu != null ? n2(l.net_bu) : ''}</td>
+      <td class="n">${l.price != null ? money(l.price) : ''}${l.priceDiff ? ` <span class="neg" title="Your contract price ${money(l.ourPrice)}">≠</span>` : ''}</td><td class="n">${l.amount != null ? '$' + n2(l.amount) : ''}${l.mathOk === false ? ' <span class="neg" title="bushels × price doesn\'t equal amount">✗</span>' : ''}</td>
+      <td class="hint">${gr(l)}</td><td><select class="tsel" data-li="${i}">${tOpt(l)}</select> ${badge(l)}</td><td class="n">${l.ourBu != null ? n2(l.ourBu) : ''}</td>
+      <td class="n${l.buDiffPct != null && Math.abs(l.buDiffPct) > 1.5 ? ' neg' : ''}">${l.buDiffPct != null ? (l.buDiffPct > 0 ? '+' : '') + l.buDiffPct.toFixed(2) + '%' : ''}</td></tr>`).join('')}
+    </tbody></table></div>
+    <p class="hint">Diff is their bushels vs yours for that load. A ≠ by the price means it doesn't match your contract's average price.</p>`;
+}
+const fileB64 = f => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = () => rej(new Error('Could not read ' + f.name)); r.readAsDataURL(f); });
+// Phone photos are shrunk to about 2000 px so they upload fast but stay readable.
+function shrinkImage(f) {
+  return new Promise(res => {
+    const url = URL.createObjectURL(f), img = new Image();
+    img.onload = () => { const k = Math.min(1, 2000 / Math.max(img.width, img.height)), c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url); res({ name: f.name, type: 'image/jpeg', data: c.toDataURL('image/jpeg', 0.85).split(',')[1] }); };
+    img.onerror = async () => { URL.revokeObjectURL(url); res({ name: f.name, type: f.type || 'image/jpeg', data: await fileB64(f) }); };
+    img.src = url;
+  });
+}
+async function readSettlementFile() {
+  const fs = [...($('payFile').files || [])];
+  if (!fs.length) return msg('payMsg', 'Pick the PDF or the photos first.');
+  O.payBuyer = $('payBuyer').value;
+  $('payRead').disabled = true;
+  try {
+    msg('payMsg', 'Uploading…');
+    const files = await Promise.all(fs.map(f => /pdf/i.test(f.type) || /\.pdf$/i.test(f.name) ? fileB64(f).then(d => ({ name: f.name, type: 'application/pdf', data: d })) : shrinkImage(f)));
+    let secs = 0; const tick = setInterval(() => { secs += 1; msg('payMsg', `Reading it… ${secs}s (usually under a minute)`); }, 1000);
+    let j; try { j = await A.api({ action: 'readSettlement', buyer: O.payBuyer, files }, 240000); } finally { clearInterval(tick); }
+    const buyer = O.payBuyer || guessBuyer(j.header && j.header.buyer);
+    O.read = { header: j.header, raw: j.lines, pages: j.pages, fileUrls: j.fileUrls, checks: j.checks, buyer, lines: R.matchSettlement(D(), j.lines, buyer, { includeTest: testMode() }) };
+    render();
+  } catch (err) { msg('payMsg', err.message); }
+  finally { if ($('payRead')) $('payRead').disabled = false; }
+}
+async function postSettlement() {
+  const r = O.read;
+  if (!r.buyer) return A.toast('Pick the buyer first.', 5000);
+  const by = (A.S.config && A.S.config.operator) || '';
+  if (!by) return A.toast('Set your name as weighmaster in Settings first (it goes on the record).', 6000);
+  if ((r.checks || []).some(c => !c.ok) && !O.postArmed) { O.postArmed = true; return A.toast('The statement doesn\'t add up (see the ✗ checks). Tap Post again if you\'ve compared it with the original.', 8000); }
+  O.postArmed = false; $('rvPost').disabled = true;
+  try {
+    const j = await A.api({ action: 'saveSettlement', by, settlement: { buyer: r.buyer, header: r.header, lines: r.lines.map(l => ({ ...l, candidates: undefined })), fileUrls: r.fileUrls } }, 60000);
+    A.toast(`Posted ${j.lines} loads for ${r.buyer}`); O.read = null; await load(true);
+  } catch (err) { A.toast(err.message, 8000); if ($('rvPost')) $('rvPost').disabled = false; }
+}
+let svoidArm = { id: null, at: 0 };
+async function voidSettlement(btn) {
+  const id = btn.dataset.svoid;
+  if (svoidArm.id !== id || Date.now() - svoidArm.at > 4000) { svoidArm = { id, at: Date.now() }; btn.textContent = 'Tap again to void'; return; }
+  svoidArm = { id: null, at: 0 };
+  try { await A.api({ action: 'voidSettlement', settlementId: id, by: (A.S.config && A.S.config.operator) || 'office' }); A.toast('Settlement voided'); await load(true); }
+  catch (err) { A.toast(err.message, 6000); }
+}
+
 // ---------- tickets: paper tickets and fixing mistakes ----------
 const localDT = v => { if (!v) return ''; const d = new Date(v); if (isNaN(d)) return ''; const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
 const isoOf = v => v ? new Date(v).toISOString() : '';
@@ -322,6 +443,7 @@ function tickets() {
     .sort((a, b) => new Date(b.DateTime) - new Date(a.DateTime) || Number(b.TicketNo) - Number(a.TicketNo));
   const rows = all.slice(0, 300);
   const edited = {}; (D().editLog || []).forEach(x => { if (x.Reason !== 'Typed in from paper ticket') edited[String(x.TicketNo)] = true; });
+  const pay = R.settlementStatus(D(), { includeTest: true }).byTicket;
   return `<div class="ohead"><h2>Tickets</h2><button class="big small" type="button" id="tNew">Add paper ticket</button></div>
     <div class="ofilters"><input id="tq" placeholder="Search ticket #, truck, field, buyer, BOL…" value="${e(O.tq)}" style="max-width:340px">
       <select id="tdirSel"><option value="">In and out</option><option value="IN"${O.tdir === 'IN' ? ' selected' : ''}>Inbound</option><option value="OUT"${O.tdir === 'OUT' ? ' selected' : ''}>Outbound</option></select>
@@ -329,7 +451,7 @@ function tickets() {
     ${rows.length ? `<div class="tblwrap"><table><thead><tr><th>Ticket</th><th>Date / time</th><th>In/out</th><th>Field / buyer · contract</th><th>Truck</th><th>BOL</th><th class="n">Net lb</th><th class="n">Bushels</th><th class="n">Moist</th><th></th></tr></thead><tbody>
     ${rows.map(t => `<tr data-ticket="${e(t.TicketNo)}" class="${t.Status === 'Void' ? 'closed' : ''}"><td><b>${String(t.TicketNo).padStart(6, '0')}</b></td><td>${dtm(t.DateTime)}</td><td>${t.Direction === 'IN' ? 'In' : 'Out'}</td>
       <td>${t.Direction === 'IN' ? e(t.Field) : `${e(t.Buyer)} · ${e(t.ContractNo || 'TBD')}`}</td><td>${e(t.Truck)}</td><td>${e(t.BOLNo)}</td><td class="n">${n0(t.NetLb)}</td><td class="n">${t.Status === 'Void' ? 'Void' : n2(t.WetBu)}</td><td class="n">${t.MoisturePct === '' || t.MoisturePct == null ? '' : t.MoisturePct}</td>
-      <td>${[t.ManualWeight === true || String(t.ManualWeight).toUpperCase() === 'TRUE' ? '<span class="tag">paper</span>' : '', edited[String(t.TicketNo)] ? '<span class="chip">edited</span>' : '', t.TestTicket === true || String(t.TestTicket).toUpperCase() === 'TRUE' ? '<span class="tag">test</span>' : ''].join(' ')}</td></tr>`).join('')}
+      <td>${[t.ManualWeight === true || String(t.ManualWeight).toUpperCase() === 'TRUE' ? '<span class="tag">paper</span>' : '', edited[String(t.TicketNo)] ? '<span class="chip">edited</span>' : '', payChip(pay[String(t.TicketNo)]), t.TestTicket === true || String(t.TestTicket).toUpperCase() === 'TRUE' ? '<span class="tag">test</span>' : ''].join(' ')}</td></tr>`).join('')}
     </tbody></table></div>${all.length > rows.length ? `<p class="hint">Showing the newest 300 of ${all.length}. Search to narrow it down.</p>` : ''}` : '<div class="empty">No tickets match.</div>'}
     <p class="hint">Tap a ticket to fix it (wrong field, customer, contract, weights, grades) or void it. Every change is kept in the EditLog tab with who, when and why. Use <b>Add paper ticket</b> for punch tickets written while the power or internet was out.</p>`;
 }
@@ -504,14 +626,14 @@ function openCustomer(name) {
   $('kName').value = c ? c.Customer : ''; $('kName').readOnly = !!c;
   $('kType').value = c ? c.Type : 'Landlord';
   $('kPays').value = c ? c.PaysAsName || '' : ''; $('kContact').value = c ? c.Contact || '' : ''; $('kPhone').value = c ? c.Phone || '' : '';
-  $('kEmail').value = c ? c.Email || '' : ''; $('kAddr').value = c ? c.Address || '' : ''; $('kNotes').value = c ? c.Notes || '' : '';
+  $('kEmail').value = c ? c.Email || '' : ''; $('kSNotes').value = c ? c.SettlementNotes || '' : ''; $('kAddr').value = c ? c.Address || '' : ''; $('kNotes').value = c ? c.Notes || '' : '';
   $('kActive').checked = !c || !(c.Active === false || String(c.Active).toUpperCase() === 'FALSE');
   $('kMsg').textContent = '';
   $('custDlg').showModal(); if (!c) $('kName').focus();
 }
 async function saveCustomer() {
   const c = { Customer: $('kName').value.trim(), Type: $('kType').value, PaysAsName: $('kPays').value, Contact: $('kContact').value, Phone: $('kPhone').value,
-    Email: $('kEmail').value, Address: $('kAddr').value, Notes: $('kNotes').value, Active: $('kActive').checked };
+    Email: $('kEmail').value, Address: $('kAddr').value, Notes: $('kNotes').value, SettlementNotes: $('kSNotes').value, Active: $('kActive').checked };
   if (!c.Customer) return msg('kMsg', 'Enter the name.');
   $('kSave').disabled = true; msg('kMsg', 'Saving…');
   try {
@@ -868,7 +990,7 @@ function printArchive() {
 function printReport() {
   let a = $('printArea');
   if (!a) { a = document.createElement('div'); a.id = 'printArea'; document.body.appendChild(a); }
-  const names = { home: 'Overview', tickets: 'Tickets', discounts: 'Discount schedules', contracts: 'Contracts', customers: 'Customers', fieldsetup: 'Fields and splits', fields: 'Field report', inventory: 'Inventory and sales position', landlord: 'Landlord grain', writeoffs: 'Write-offs', adjustments: 'Inventory adjustments' };
+  const names = { payments: 'Payments and settlements', home: 'Overview', tickets: 'Tickets', discounts: 'Discount schedules', contracts: 'Contracts', customers: 'Customers', fieldsetup: 'Fields and splits', fields: 'Field report', inventory: 'Inventory and sales position', landlord: 'Landlord grain', writeoffs: 'Write-offs', adjustments: 'Inventory adjustments' };
   const body = $('oBody').cloneNode(true);
   body.querySelectorAll('button').forEach(b => b.remove());
   body.querySelectorAll('.ohead h2').forEach(h => h.remove());
@@ -880,6 +1002,16 @@ function printReport() {
 // ---------------- wiring ----------------
 function wire() {
   const b = $('oBody');
+  if ($('payRead')) $('payRead').onclick = readSettlementFile;
+  if ($('payBuyer')) $('payBuyer').onchange = () => { O.payBuyer = $('payBuyer').value; };
+  if ($('rvCancel')) $('rvCancel').onclick = () => { O.read = null; render(); };
+  if ($('rvPost')) $('rvPost').onclick = postSettlement;
+  if ($('rvBuyer')) $('rvBuyer').onchange = () => { O.read.buyer = $('rvBuyer').value; O.read.lines = R.matchSettlement(D(), O.read.raw, O.read.buyer, { includeTest: testMode() }); render(); };
+  b.querySelectorAll('select.tsel').forEach(x => x.onchange = () => { const l = O.read.lines[+x.dataset.li]; const t = D().tickets.find(z => String(z.TicketNo) === x.value);
+    l.ticketNo = t ? Number(t.TicketNo) : null; l.matchedBy = t ? 'picked' : '';
+    l.ourBu = t ? Math.round(Number(t.WetBu) * (l.apply_pct ?? 100)) / 100 : null; l.buDiffPct = t && l.net_bu != null && l.ourBu ? Math.round((l.net_bu - l.ourBu) / l.ourBu * 10000) / 100 : null; render(); });
+  b.querySelectorAll('[data-popen]').forEach(tr => tr.onclick = () => { O.open['pay:' + tr.dataset.popen] = !O.open['pay:' + tr.dataset.popen]; render(); });
+  b.querySelectorAll('[data-svoid]').forEach(x => x.onclick = () => voidSettlement(x));
   b.querySelectorAll('[data-go]').forEach(x => x.onclick = () => { const g = x.dataset.go; if (!g) return; if (g === 'scale') return show('scale'); O.tab = g; render(); window.scrollTo(0, 0); });
   b.querySelectorAll('[data-goc]').forEach(x => x.onclick = () => { O.tab = 'contracts'; O.open['c:' + x.dataset.goc] = true; render(); });
   b.querySelectorAll('[data-copen]').forEach(tr => tr.onclick = () => { O.open['c:' + tr.dataset.copen] = !O.open['c:' + tr.dataset.copen]; render(); });

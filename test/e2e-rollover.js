@@ -18,6 +18,7 @@ const BASE = 'http://localhost:8123/';
     console.log(truck, 'contract info:', await page.$eval('#cinfo', e => e.textContent));
     await page.click('#wIn'); await page.click('#newT');
     await page.click('.yrow >> text=' + truck); await page.click('#sLoad'); await stable();
+    await page.fill('#bol', 'B-' + truck); await page.dispatchEvent('#bol', 'input'); await page.waitForTimeout(200);
     await page.click('#wOut'); await page.waitForTimeout(1500);
   }
   console.log('\nlast ticket printed:\n' + await page.$eval('#printArea pre', e => e.textContent));

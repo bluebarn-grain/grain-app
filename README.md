@@ -63,6 +63,11 @@ Tap **Office** at the top (same app, same link). It opens on **Home**: today's l
 - **Dry bushels** use water shrink to the commodity's standard moisture (Commodities tab). To use a flat shrink instead, add **ShrinkPerPoint** to Settings (e.g. 1.4 for 1.4% per point).
 - **Print** prints the report you're looking at on letter paper.
 
+## Payments (settlements)
+Office → Payments → pick the buyer's settlement PDF (or photos of each page) → **Read it**. Claude reads the statement (any buyer's format), checks that the loads, bushels and dollars add up, and matches each load to your ticket by your ticket #/BOL in their "other ref", their ticket #, or date + weight + truck. Pick the ticket for any it couldn't match, then **Post settlement**. Tickets show *settled* / *paid*, and contracts show settled bushels, their-vs-our shrink, and dollars paid. Originals are saved to the Drive folder "Blue Barn Grain – Settlements". Void undoes a post.
+
+Needs an Anthropic API key: Apps Script → Project Settings → Script Properties → `ANTHROPIC_API_KEY`. Optional `ANTHROPIC_MODEL` (default claude-sonnet-5-5). A buyer's quirks can go in that customer's *Settlement notes*. Roughly a few cents per statement.
+
 ## Backups
 - **Every night at 11 pm** the backend saves a dated copy of the whole Sheet into Google Drive → **Grain Backups** (Bluebarn.grain account). The last 30 days are kept, plus the copy from the 1st of every month forever. The folder is shared with Settings → **BackupShareWith**.
 - **Every Sunday** an Excel (.xlsx) copy of every tab is emailed to Settings → **BackupEmail** (or OfficeEmail). That's the copy that lives outside Google — keep those emails.
@@ -84,7 +89,7 @@ In the backend, paste the real Sheet ID into `switchToLive()` and run it once. I
 ## Tests
 ```
 node test/unit.test.js          # parsers and backend logic
-node test/emails.test.js        # nightly buyer emails and contract roll-over
+node test/emails.test.js && node test/settlements.test.js        # nightly buyer emails and contract roll-over
 node test/reports.test.js       # office reports, contracts, adjustments
 node test/server.js & node test/e2e-office.js   # office side in the browser
 node test/server.js & node test/e2e-office2.js  # paper tickets, fixes, BOLs, discounts, legal

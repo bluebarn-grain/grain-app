@@ -233,6 +233,83 @@
     return out;
   }
 
+  // ---- buyer settlements ----
+  const digits = v => String(v == null ? '' : v).replace(/\D/g, '').replace(/^0+/, '');
+  const dayDiff = (a, b) => { const x = new Date(a), y = new Date(b); return isNaN(x) || isNaN(y) ? 99 : Math.abs(x - y) / 86400000; };
+  // How much of each of our tickets is already on a posted settlement (percent applied).
+  function settledPct(data) {
+    const pct = {};
+    (data.settlementLines || []).forEach(l => { if (String(l.Status) === 'Void' || !has(l.TicketNo)) return; pct[String(l.TicketNo)] = (pct[String(l.TicketNo)] || 0) + (has(l.ApplyPct) ? num(l.ApplyPct) : 100); });
+    return pct;
+  }
+  // Matches each settlement line to one of our outbound tickets: their "other ref" = our ticket # or BOL,
+  // then ship date + weight (+ truck). Unsure lines get no ticket and a short list of candidates.
+  function matchSettlement(data, lines, buyer, opt = {}) {
+    const ours = (data.tickets || []).filter(t => t.Direction === 'OUT' && t.Status === 'Closed' && (opt.includeTest || !isTrue(t.TestTicket)) && (!buyer || t.Buyer === buyer));
+    const done = settledPct(data), used = {};
+    const pr = contractPricing(data, opt);
+    const appliedTo = {}; (data.allocations || []).forEach(a => { appliedTo[String(a.TicketNo)] = String(a.ContractNo); });
+    const room = t => 100 - (done[String(t.TicketNo)] || 0) - (used[String(t.TicketNo)] || 0);
+    return lines.map(l => {
+      const apply = has(l.apply_pct) ? num(l.apply_pct) : 100, ref = digits(l.other_ref);
+      const open = ours.filter(t => room(t) >= apply - 0.5);
+      let pick = null, by = '';
+      if (ref) {
+        pick = open.find(t => digits(t.TicketNo) === ref); if (pick) by = 'ticket #';
+        if (!pick) { pick = open.find(t => digits(t.BOLNo) === ref); if (pick) by = 'BOL'; }
+      }
+      if (!pick && l.buyer_ticket) { pick = open.find(t => String(t.BuyerTicket || '').split(', ').some(b => b && b.replace(/-\d+$/, '') === String(l.buyer_ticket).replace(/-\d+$/, ''))); if (pick) by = 'their ticket #'; }
+      const scored = open.map(t => {
+        let sc = 0; const dd = dayDiff(l.ship_date, t.DateTime), w = num(l.weight_lb), net = num(t.NetLb);
+        if (dd <= 0.6) sc += 3; else if (dd <= 2) sc += 2; else if (dd <= 4) sc += 1; else sc -= 3;
+        if (w && net) { const pd = Math.abs(w - net) / net * 100; if (pd <= 0.5) sc += 4; else if (pd <= 1.5) sc += 3; else if (pd <= 3) sc += 1; else sc -= 2; }
+        if (l.vehicle && t.Truck && (digits(l.vehicle) && digits(l.vehicle) === digits(t.Truck))) sc += 2;
+        return { t, sc };
+      }).filter(x => x.sc > 0).sort((a, b) => b.sc - a.sc);
+      if (!pick && scored.length && scored[0].sc >= 6 && (!scored[1] || scored[0].sc - scored[1].sc >= 2)) { pick = scored[0].t; by = 'date + weight'; }
+      if (pick) used[String(pick.TicketNo)] = (used[String(pick.TicketNo)] || 0) + apply;
+      const ourBu = pick ? r2(num(pick.WetBu) * apply / 100) : null;
+      const cno = pick ? (appliedTo[String(pick.TicketNo)] || String(pick.ContractNo || '')) : '';
+      const ourPrice = cno && pr[cno] && pr[cno].avgFlat != null ? pr[cno].avgFlat : null;
+      return { ...l, ticketNo: pick ? num(pick.TicketNo) : null, matchedBy: by, ourContract: cno, ourBu,
+        buDiff: pick && has(l.net_bu) ? r2(num(l.net_bu) - ourBu) : null, buDiffPct: pick && has(l.net_bu) && ourBu ? r2((num(l.net_bu) - ourBu) / ourBu * 100) : null,
+        ourPrice, priceDiff: ourPrice != null && has(l.price) ? Math.round((num(l.price) - ourPrice) * 10000) / 10000 : null,
+        mathOk: has(l.price) && has(l.amount) && has(l.net_bu) ? Math.abs(num(l.price) * num(l.net_bu) - num(l.amount)) < 0.06 : null,
+        candidates: (pick ? [] : scored.slice(0, 6).map(x => num(x.t.TicketNo))) };
+    });
+  }
+  // Settled / paid status of every outbound ticket, and totals by contract and by buyer.
+  function settlementStatus(data, opt = {}) {
+    const st = {}; (data.settlements || []).forEach(s => { if (String(s.Status) !== 'Void') st[String(s.SettlementId)] = s; });
+    const isPaid = s => s && (has(s.CheckAmount) || String(s.CheckNo || '').trim());
+    const byTicket = {};
+    (data.settlementLines || []).forEach(l => {
+      if (String(l.Status) === 'Void' || !st[String(l.SettlementId)] || !has(l.TicketNo)) return;
+      const k = String(l.TicketNo), s = st[String(l.SettlementId)];
+      const x = byTicket[k] = byTicket[k] || { pct: 0, bu: 0, amount: 0, paid: true, checks: [], buyerTickets: [] };
+      x.pct += has(l.ApplyPct) ? num(l.ApplyPct) : 100; x.bu += num(l.NetBu); x.amount += num(l.Amount);
+      if (!isPaid(s)) x.paid = false; else if (s.CheckNo && !x.checks.includes(String(s.CheckNo))) x.checks.push(String(s.CheckNo));
+      if (l.BuyerTicket) x.buyerTickets.push(String(l.BuyerTicket));
+    });
+    const applied = {}; (data.allocations || []).forEach(a => { applied[String(a.TicketNo)] = String(a.ContractNo); });
+    const contracts = {}, buyers = {};
+    (data.tickets || []).filter(t => t.Direction === 'OUT' && t.Status === 'Closed' && (opt.includeTest || !isTrue(t.TestTicket)) && (!opt.cropYear || String(t.CropYear) === String(opt.cropYear))).forEach(t => {
+      const k = String(t.TicketNo), c = applied[k] || String(t.ContractNo || 'TBD'), x = byTicket[k];
+      const r = contracts[c] = contracts[c] || { contractNo: c, buyer: t.Buyer, loads: 0, ourBu: 0, settledLoads: 0, settledBu: 0, ourBuSettled: 0, amount: 0, paidAmount: 0, unsettled: [] };
+      r.loads++; r.ourBu += num(t.WetBu);
+      if (x) { r.settledLoads += x.pct >= 99.5 ? 1 : x.pct / 100; r.settledBu += x.bu; r.ourBuSettled += num(t.WetBu) * Math.min(100, x.pct) / 100; r.amount += x.amount; if (x.paid) r.paidAmount += x.amount; }
+      if (!x || x.pct < 99.5) r.unsettled.push({ no: num(t.TicketNo), at: t.DateTime, truck: t.Truck, bol: t.BOLNo, bu: num(t.WetBu), pct: x ? r2(x.pct) : 0 });
+    });
+    Object.values(st).forEach(s => {
+      const b = buyers[s.Buyer] = buyers[s.Buyer] || { buyer: s.Buyer, settlements: 0, gross: 0, deductions: 0, net: 0, paid: 0 };
+      const g = num(s.GrossAmount), n = has(s.NetAmount) ? num(s.NetAmount) : (has(s.CheckAmount) ? num(s.CheckAmount) : g);
+      b.settlements++; b.gross += g; b.net += n; b.deductions += g ? g - n : 0; if (isPaid(s)) b.paid += has(s.CheckAmount) ? num(s.CheckAmount) : n;
+    });
+    const fix = o => { Object.keys(o).forEach(k => { if (typeof o[k] === 'number') o[k] = r2(o[k]); }); return o; };
+    return { byTicket, contracts: Object.values(contracts).map(r => ({ ...fix(r), shrinkPct: r.ourBuSettled ? r2((r.settledBu - r.ourBuSettled) / r.ourBuSettled * 100) : null })).sort((a, b) => String(a.contractNo).localeCompare(String(b.contractNo))),
+      buyers: Object.values(buyers).map(fix) };
+  }
+
   // Shrink written off when the bins were emptied, per commodity and crop year.
   function writeOffs(data, opt = {}) {
     return inventory(data, opt).filter(r => (data.adjustments || []).some(a => String(a.Status) !== 'Void' && a.Type === 'BinsEmpty' && a.Commodity === r.commodity && String(a.CropYear) === String(r.cropYear)))
@@ -245,7 +322,7 @@
       });
   }
 
-  const api = { shrinkFactor, shrinkMath, schedule, fieldReport, inventory, landlordGrain, writeOffs, appliedByContract, operatorName, contractPricing, contractApplications };
+  const api = { shrinkFactor, shrinkMath, schedule, fieldReport, inventory, landlordGrain, writeOffs, appliedByContract, operatorName, contractPricing, contractApplications, matchSettlement, settlementStatus, settledPct };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BBR = api;
 })(typeof window !== 'undefined' ? window : globalThis);

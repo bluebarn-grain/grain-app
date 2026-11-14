@@ -69,6 +69,9 @@ function handle_(p) {
       case 'addManualTicket': return out_(merge_({ ok: true }, addManualTicket_(ss, p.ticket || {}, p.by)));
       case 'editTicket': return out_(merge_({ ok: true }, editTicket_(ss, p.ticketNo, p.changes || {}, p.by, p.reason)));
       case 'saveCommodity': return out_(merge_({ ok: true }, saveCommodity_(ss, p.commodity || {}, !!p.isNew)));
+      case 'readSettlement': return out_(merge_({ ok: true }, readSettlement_(ss, p)));
+      case 'saveSettlement': return out_(merge_({ ok: true }, saveSettlement_(ss, p.settlement || {}, p.by)));
+      case 'voidSettlement': return out_(merge_({ ok: true }, voidSettlement_(ss, p.settlementId, p.by)));
       case 'voidAdjustment': return out_(merge_({ ok: true }, voidAdjustment_(ss, p.adjNo, p.by)));
       default: return out_({ ok: false, error: 'Unknown action: ' + p.action });
     }
@@ -512,7 +515,7 @@ function officeData_(ss) {
   try { allocatePending_(ss); } finally { lock.releaseLock(); }
   var keep = ['TicketNo', 'DateTime', 'Direction', 'Status', 'Commodity', 'CropYear', 'Field', 'ContractNo', 'Buyer', 'Truck', 'Driver', 'Operator', 'LoadNo',
     'GrossLb', 'TareLb', 'NetLb', 'WetBu', 'MoisturePct', 'TestWeight', 'GrainTempF', 'FMPct', 'BOLNo', 'TestTicket', 'RolledFrom', 'ManualWeight',
-    'TimeIn', 'TimeOut', 'Remarks', 'Station', 'PaperTicket', 'EditedAt'];
+    'TimeIn', 'TimeOut', 'Remarks', 'Station', 'PaperTicket', 'EditedAt', 'BuyerTicket'];
   var tickets = rows_(tab_(ss, 'Tickets')).filter(function (t) { return t.TicketNo !== '' && (t.Status === 'Closed' || t.Status === 'Void'); })
     .map(function (t) { var o = {}; keep.forEach(function (k) { o[k] = t[k]; }); return o; });
   var opt = function (name) { var sh = ss.getSheetByName(name); return sh ? rows_(sh) : []; };
@@ -530,6 +533,8 @@ function officeData_(ss) {
     shares: rows_(tab_(ss, 'Shares')).filter(function (r) { return r.Field && r.Owner; }),
     editLog: opt('EditLog').slice(-500),
     backupLog: opt('BackupLog').slice(-5),
+    settlements: opt('Settlements').filter(function (a) { return String(a.Status) !== 'Void'; }),
+    settlementLines: opt('SettlementLines').filter(function (a) { return String(a.Status) !== 'Void'; }),
     commodities: rows_(tab_(ss, 'Commodities')).filter(function (c) { return c.Commodity; }),
     settings: settings,
     at: new Date().toISOString()
@@ -609,7 +614,7 @@ function voidAdjustment_(ss, adjNo, by) {
 
 
 /* ---- customers, fields and splits ---- */
-var CUSTOMER_COLUMNS = ['Customer', 'Type', 'PaysAsName', 'Contact', 'Phone', 'Email', 'Address', 'Active', 'Notes'];
+var CUSTOMER_COLUMNS = ['Customer', 'Type', 'PaysAsName', 'Contact', 'Phone', 'Email', 'Address', 'Active', 'Notes', 'SettlementNotes'];
 var FIELD_COLUMNS = ['Field', 'Acres', 'OpsCenterName', 'FSAFarm', 'FSATract', 'InsuranceUnit', 'Active', 'Notes', 'Section', 'Township', 'Range', 'County'];
 var CUSTOMER_TYPES = ['Buyer', 'Landlord', 'Operator'];
 
@@ -637,7 +642,7 @@ function saveCustomer_(ss, c, isNew) {
   try {
     var rec = { Customer: c.Customer, Type: c.Type };
     if ('Active' in c || isNew) rec.Active = c.Active === false || String(c.Active).toUpperCase() === 'FALSE' ? false : true;
-    ['PaysAsName', 'Contact', 'Phone', 'Email', 'Address', 'Notes'].forEach(function (k) { if (k in c) rec[k] = String(c[k] == null ? '' : c[k]).trim(); });
+    ['PaysAsName', 'Contact', 'Phone', 'Email', 'Address', 'Notes', 'SettlementNotes'].forEach(function (k) { if (k in c) rec[k] = String(c[k] == null ? '' : c[k]).trim(); });
     return { customer: upsert_(ss, 'Customers', CUSTOMER_COLUMNS, 'Customer', rec, isNew, 'Customer') };
   } finally { lock.releaseLock(); }
 }
@@ -1004,4 +1009,196 @@ function emailExcel_(id, to, stamp, live) {
       'Keep these emails: they are the copy of the grain records that lives outside Google. ' +
       'Daily copies are also kept in Google Drive → ' + BACKUP_FOLDER + ' (Bluebarn.grain account).',
     attachments: [blob] });
+}
+
+
+/* ======================================================================
+ * Buyer settlements and payments
+ *
+ * The office uploads a buyer's settlement / remittance (PDF or photos). The backend keeps
+ * the original in Drive → "Grain Settlements", and Claude (Anthropic API) reads it into one
+ * standard shape whatever the buyer's layout: check and totals, plus one line per load.
+ * Google gives each outside request 60 seconds, so the pages are read in groups, all at
+ * once, then merged (a load listed in two sections becomes one line) and tied out.
+ * The app matches the lines to our tickets, the office reviews, then saveSettlement posts it.
+ *
+ * Setup: Apps Script → Project Settings (gear) → Script Properties → add
+ * ANTHROPIC_API_KEY = your key from console.anthropic.com. Optional ANTHROPIC_MODEL.
+ * ==================================================================== */
+var SETTLE_FOLDER = 'Grain Settlements';
+var SETTLEMENT_COLUMNS = ['SettlementId', 'Buyer', 'StatementNo', 'Voucher', 'StatementDate', 'CheckNo', 'CheckDate', 'Commodity', 'Contracts',
+  'LoadCount', 'Bushels', 'GrossAmount', 'Deductions', 'NetAmount', 'CheckAmount', 'FileUrl', 'PostedBy', 'PostedAt', 'Status', 'Notes'];
+var SLINE_COLUMNS = ['SettlementId', 'Line', 'BuyerTicket', 'ShipDate', 'Vehicle', 'OtherRef', 'ContractNo', 'WeightLb', 'ApplyPct', 'GrossBu', 'NetBu',
+  'Price', 'Amount', 'TestWeight', 'Moisture', 'FM', 'Damage', 'Adjustments', 'TicketNo', 'MatchedBy', 'Status'];
+var PAGES_PER_CALL = 3;
+
+var SETTLE_PROMPT = 'This is a grain buyer\'s settlement, remittance or purchase statement for grain sold by a farm (Blue Barn Land & Cattle, also paid as J W Roenbaugh). ' +
+  'Read it exactly as printed. Use plain numbers without $ or commas. Dates as YYYY-MM-DD. Leave a field out when it is not printed. Never guess or invent values.';
+
+function anthropic_(content, tool) {
+  var key = PROPS.getProperty('ANTHROPIC_API_KEY');
+  if (!key) throw new Error('No Anthropic API key yet. In Apps Script: Project Settings → Script Properties → add ANTHROPIC_API_KEY.');
+  return {
+    url: 'https://api.anthropic.com/v1/messages', method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+    payload: JSON.stringify({ model: PROPS.getProperty('ANTHROPIC_MODEL') || 'claude-sonnet-5-5', max_tokens: 16000,
+      tools: [tool], tool_choice: { type: 'tool', name: tool.name }, messages: [{ role: 'user', content: content }] })
+  };
+}
+function toolResult_(resp, what) {
+  var code = resp.getResponseCode(), body = resp.getContentText();
+  if (code !== 200) {
+    var msg = body; try { msg = JSON.parse(body).error.message; } catch (e) {}
+    throw new Error('Reading the ' + what + ' failed (' + code + '): ' + String(msg).slice(0, 300));
+  }
+  var j = JSON.parse(body), use = (j.content || []).filter(function (c) { return c.type === 'tool_use'; })[0];
+  if (!use) throw new Error('Reading the ' + what + ' came back empty');
+  if (j.stop_reason === 'max_tokens') throw new Error('The ' + what + ' was too long to read in one piece');
+  return use.input;
+}
+
+var HEADER_TOOL = { name: 'settlement_header', description: 'The statement-level facts: who paid, check, totals and deductions.',
+  input_schema: { type: 'object', properties: {
+    buyer: { type: 'string', description: 'Company that is paying' }, statement_no: { type: 'string', description: 'Settlement / statement / sheet number' },
+    voucher: { type: 'string' }, statement_date: { type: 'string' }, check_no: { type: 'string' }, check_date: { type: 'string' },
+    commodity: { type: 'string' }, contracts: { type: 'array', items: { type: 'object', properties: { contract_no: { type: 'string' }, price: { type: 'number' } } } },
+    total_bushels: { type: 'number' }, gross_amount: { type: 'number', description: 'Total before deductions' },
+    deductions: { type: 'array', items: { type: 'object', properties: { label: { type: 'string' }, amount: { type: 'number', description: 'Positive number taken off' } } } },
+    net_amount: { type: 'number', description: 'Settlement amount after deductions' }, check_amount: { type: 'number' },
+    load_count: { type: 'number' }, page_count: { type: 'number' }, notes: { type: 'string' } }, required: ['buyer'] } };
+
+var LINES_TOOL = { name: 'load_lines', description: 'Every load (truck) line printed on the given pages.',
+  input_schema: { type: 'object', properties: { lines: { type: 'array', items: { type: 'object', properties: {
+    page: { type: 'number' }, buyer_ticket: { type: 'string', description: "Buyer's ticket / scale ticket number, including any -01/-02 suffix" },
+    ship_date: { type: 'string' }, vehicle: { type: 'string' }, other_ref: { type: 'string', description: 'Our reference: other ref, BOL, shipper ticket, origin ticket' },
+    contract_no: { type: 'string' }, weight_lb: { type: 'number', description: 'Unload / net weight in pounds at their scale' }, apply_pct: { type: 'number', description: 'Percent of the load applied, 100 if not shown' },
+    gross_bu: { type: 'number' }, net_bu: { type: 'number', description: 'Bushels paid after their adjustments' }, price: { type: 'number' }, amount: { type: 'number', description: 'Dollar amount for the load' },
+    test_weight: { type: 'number' }, moisture: { type: 'number' }, fm: { type: 'number' }, damage: { type: 'number' },
+    adjustments: { type: 'string', description: 'Any shrink or discount on this load, as printed' } }, required: ['buyer_ticket'] } } }, required: ['lines'] } };
+
+/** Rough page count of a PDF from its bytes. */
+function pdfPages_(bytes) {
+  var s = Utilities.newBlob(bytes).getDataAsString('ISO-8859-1');
+  var m = s.match(/\/Type\s*\/Page(?!s)/g);
+  return m ? m.length : 1;
+}
+
+function readSettlement_(ss, p) {
+  var files = (p.files || []).filter(function (f) { return f && f.data; });
+  if (!files.length) throw new Error('Attach the settlement (PDF or photos)');
+  var buyer = String(p.buyer || '').trim(), notes = '';
+  if (buyer) { var c = rows_(tab_(ss, 'Customers')).filter(function (x) { return x.Customer === buyer; })[0]; if (c && c.SettlementNotes) notes = String(c.SettlementNotes); }
+  // keep the original
+  var it = DriveApp.getFoldersByName(SETTLE_FOLDER), folder = it.hasNext() ? it.next() : DriveApp.createFolder(SETTLE_FOLDER);
+  var stamp = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HHmm'), urls = [];
+  var blocks = files.map(function (f, i) {
+    var bytes = Utilities.base64Decode(f.data), type = f.type || 'application/pdf';
+    var saved = folder.createFile(Utilities.newBlob(bytes, type, (buyer || 'Settlement') + ' ' + stamp + (files.length > 1 ? ' (' + (i + 1) + ')' : '') + (/pdf/.test(type) ? '.pdf' : '.jpg')));
+    urls.push(saved.getUrl());
+    return { type: type, data: f.data, pages: /pdf/.test(type) ? pdfPages_(bytes) : 1 };
+  });
+  var doc = blocks.map(function (b) { return /pdf/.test(b.type) ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b.data } }
+    : { type: 'image', source: { type: 'base64', media_type: b.type, data: b.data } }; });
+  var pages = blocks.reduce(function (a, b) { return a + b.pages; }, 0);
+  var hint = notes ? ' Notes about this buyer\'s statements: ' + notes : '';
+  var reqs = [anthropic_(doc.concat([{ type: 'text', text: SETTLE_PROMPT + hint + ' Give the statement-level facts with the settlement_header tool.' }]), HEADER_TOOL)];
+  for (var from = 1; from <= pages; from += PAGES_PER_CALL) {
+    var to = Math.min(pages, from + PAGES_PER_CALL - 1);
+    reqs.push(anthropic_(doc.concat([{ type: 'text', text: SETTLE_PROMPT + hint + ' List every load line printed on page' + (from === to ? ' ' + from : 's ' + from + ' to ' + to) +
+      ' (pages counted from 1 across everything attached) with the load_lines tool. If a load appears in more than one section (for example a delivery sheet and a settlement), list it once per section with its page. Skip lines on other pages. Return an empty list if those pages have no load lines.' }]), LINES_TOOL));
+  }
+  var resps = UrlFetchApp.fetchAll(reqs);
+  var header = toolResult_(resps[0], 'check and totals'), raw = [];
+  for (var i = 1; i < resps.length; i++) raw = raw.concat(toolResult_(resps[i], 'load lines').lines || []);
+  var lines = mergeLines_(raw);
+  return { header: header, lines: lines, pages: pages, fileUrls: urls, checks: tieOut_(header, lines) };
+}
+
+/** One line per buyer ticket: a load printed in two sections is merged, keeping every value found. */
+function mergeLines_(raw) {
+  var by = {}, order = [];
+  raw.forEach(function (l) {
+    var k = String(l.buyer_ticket || '').replace(/\s+/g, '').toUpperCase();
+    if (!k) { k = '?' + order.length; }
+    if (!by[k]) { by[k] = {}; order.push(k); }
+    Object.keys(l).forEach(function (f) { if (l[f] !== '' && l[f] != null && (by[k][f] === undefined || by[k][f] === '')) by[k][f] = l[f]; });
+  });
+  return order.map(function (k) { var l = by[k]; if (l.apply_pct == null) l.apply_pct = 100; if (l.net_bu == null && l.gross_bu != null) l.net_bu = l.gross_bu; return l; });
+}
+
+/** Does it add up? loads vs total, total − deductions vs net, net vs check. */
+function tieOut_(h, lines) {
+  var r2 = function (x) { return Math.round(x * 100) / 100; }, out = [];
+  var amt = r2(lines.reduce(function (a, l) { return a + (Number(l.amount) || 0); }, 0));
+  var bu = r2(lines.reduce(function (a, l) { return a + (Number(l.net_bu) || 0); }, 0));
+  var ded = r2((h.deductions || []).reduce(function (a, d) { return a + (Number(d.amount) || 0); }, 0));
+  if (h.load_count != null) out.push({ check: 'Loads', expected: h.load_count, found: lines.length, ok: Number(h.load_count) === lines.length });
+  if (h.total_bushels != null) out.push({ check: 'Bushels', expected: h.total_bushels, found: bu, ok: Math.abs(bu - h.total_bushels) < 0.06 });
+  if (h.gross_amount != null) out.push({ check: 'Load amounts add up to the total', expected: h.gross_amount, found: amt, ok: Math.abs(amt - h.gross_amount) < 0.06 });
+  var net = h.net_amount != null ? h.net_amount : h.check_amount;
+  if (h.gross_amount != null && net != null) out.push({ check: 'Total − deductions = net', expected: net, found: r2(h.gross_amount - ded), ok: Math.abs(h.gross_amount - ded - net) < 0.06 });
+  if (h.check_amount != null && h.net_amount != null) out.push({ check: 'Net = check', expected: h.check_amount, found: h.net_amount, ok: Math.abs(h.check_amount - h.net_amount) < 0.06 });
+  return out;
+}
+
+/** Posts a reviewed settlement: one Settlements row, one SettlementLines row per load (with the ticket it matched). */
+function saveSettlement_(ss, st, by) {
+  if (!String(by || '').trim()) throw new Error('Enter who is posting it');
+  var h = st.header || {}, lines = st.lines || [];
+  if (!st.buyer) throw new Error('Pick the buyer');
+  if (!lines.length) throw new Error('No load lines to post');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var t = sheetOrNew_(ss, 'Settlements', SETTLEMENT_COLUMNS), sh = t.sh, m = t.cols.map;
+    var existing = rows_(sh).filter(function (r) { return String(r.Status) !== 'Void' && r.Buyer === st.buyer &&
+      ((h.statement_no && String(r.StatementNo) === String(h.statement_no)) || (h.voucher && String(r.Voucher) === String(h.voucher)) || (h.check_no && String(r.CheckNo) === String(h.check_no))); });
+    if (existing.length) throw new Error('This settlement was already posted (' + existing[0].SettlementId + ')');
+    var id = 'S' + Utilities.formatDate(new Date(), TZ, 'yyyyMMdd-HHmmss');
+    var ded = (h.deductions || []).map(function (d) { return d.label + ' ' + d.amount; }).join('; ');
+    var dedAmt = (h.deductions || []).reduce(function (a, d) { return a + (Number(d.amount) || 0); }, 0);
+    var row = new Array(t.cols.width).fill(''), set = function (k, v) { row[m[k] - 1] = v; };
+    set('SettlementId', id); set('Buyer', st.buyer); set('StatementNo', h.statement_no || ''); set('Voucher', h.voucher || ''); set('StatementDate', date_(h.statement_date));
+    set('CheckNo', h.check_no || ''); set('CheckDate', date_(h.check_date)); set('Commodity', h.commodity || '');
+    set('Contracts', (h.contracts || []).map(function (c) { return c.contract_no + (c.price ? ' @ ' + c.price : ''); }).join(', '));
+    set('LoadCount', lines.length); set('Bushels', lines.reduce(function (a, l) { return a + (Number(l.net_bu) || 0); }, 0));
+    set('GrossAmount', h.gross_amount == null ? '' : h.gross_amount); set('Deductions', ded ? ded + ' (total ' + (Math.round(dedAmt * 100) / 100) + ')' : '');
+    set('NetAmount', h.net_amount == null ? '' : h.net_amount); set('CheckAmount', h.check_amount == null ? '' : h.check_amount);
+    set('FileUrl', (st.fileUrls || []).join(' ')); set('PostedBy', String(by).trim()); set('PostedAt', new Date()); set('Status', 'Posted'); set('Notes', st.notes || '');
+    sh.getRange(sh.getLastRow() + 1, 1, 1, t.cols.width).setValues([row]);
+    var lt = sheetOrNew_(ss, 'SettlementLines', SLINE_COLUMNS), lm = lt.cols.map;
+    var out = lines.map(function (l, i) {
+      var r = new Array(lt.cols.width).fill(''), s2 = function (k, v) { r[lm[k] - 1] = v == null ? '' : v; };
+      s2('SettlementId', id); s2('Line', i + 1); s2('BuyerTicket', l.buyer_ticket); s2('ShipDate', date_(l.ship_date)); s2('Vehicle', l.vehicle); s2('OtherRef', l.other_ref);
+      s2('ContractNo', l.contract_no); s2('WeightLb', l.weight_lb); s2('ApplyPct', l.apply_pct); s2('GrossBu', l.gross_bu); s2('NetBu', l.net_bu); s2('Price', l.price);
+      s2('Amount', l.amount); s2('TestWeight', l.test_weight); s2('Moisture', l.moisture); s2('FM', l.fm); s2('Damage', l.damage); s2('Adjustments', l.adjustments);
+      s2('TicketNo', l.ticketNo ? Number(l.ticketNo) : ''); s2('MatchedBy', l.matchedBy || ''); s2('Status', 'Posted');
+      return r;
+    });
+    lt.sh.getRange(lt.sh.getLastRow() + 1, 1, out.length, lt.cols.width).setValues(out);
+    // their ticket # on our ticket, for searching
+    var tk = ticketRow_(ss, 0), tc = ensureColumns_(tk.sh, TICKET_COLUMNS.concat(['PaperTicket', 'EditedAt', 'BuyerTicket'])), tv = tk.sh.getDataRange().getValues();
+    lines.forEach(function (l) {
+      if (!l.ticketNo) return;
+      for (var i = 1; i < tv.length; i++) if (Number(tv[i][tc.map.TicketNo - 1]) === Number(l.ticketNo)) {
+        var cur = String(tv[i][tc.map.BuyerTicket - 1] || ''), add = String(l.buyer_ticket || '');
+        if (add && cur.split(', ').indexOf(add) < 0) tk.sh.getRange(i + 1, tc.map.BuyerTicket).setValue(cur ? cur + ', ' + add : add);
+      }
+    });
+    return { settlementId: id, lines: out.length };
+  } finally { lock.releaseLock(); }
+}
+
+function voidSettlement_(ss, id, by) {
+  if (!String(by || '').trim()) throw new Error('Enter who is voiding it');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var found = false;
+    [['Settlements', SETTLEMENT_COLUMNS], ['SettlementLines', SLINE_COLUMNS]].forEach(function (x) {
+      var sh = ss.getSheetByName(x[0]); if (!sh) return;
+      var m = ensureColumns_(sh, x[1]).map, v = sh.getDataRange().getValues();
+      for (var i = 1; i < v.length; i++) if (String(v[i][m.SettlementId - 1]) === String(id)) { sh.getRange(i + 1, m.Status).setValue('Void'); found = true; }
+    });
+    if (!found) throw new Error('Settlement ' + id + ' was not found');
+    return { settlementId: id };
+  } finally { lock.releaseLock(); }
 }

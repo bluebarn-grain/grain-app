@@ -405,8 +405,8 @@ function printTicket(t) {
 }
 
 // ---------------- sync ----------------
-async function api(body) {
-  const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 25000);
+async function api(body, timeoutMs = 25000) {
+  const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), timeoutMs);
   try {
     const r = await fetch(S.config.backendUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...body, key: S.config.key }), redirect: 'follow', signal: ctl.signal });
     const j = await r.json();
