@@ -22,6 +22,7 @@ async function load(force) {
   if (!O.data) O.data = await A.DB.get('kv', 'office') || null;
   render();
   if (!A.configured()) { status('Connect the backend in Settings to load the office data.'); return; }
+  if (!signedIn()) return;
   if (O.busy) return;
   if (!force && O.data && Date.now() - new Date(O.data.at).getTime() < 60000) return;
   O.busy = true; status('Loading from the Sheet…');
@@ -30,8 +31,10 @@ async function load(force) {
     delete j.ok; O.data = j;
     await A.DB.put('kv', j, 'office');
   } catch (err) {
+    O.busy = false;
+    if (err.signin) return render();
     status(`Couldn't reach the Sheet (${err.message}). ` + (O.data ? 'Showing the last copy.' : ''));
-    O.busy = false; return;
+    return;
   }
   O.busy = false; render();
 }
@@ -63,7 +66,51 @@ function show(view) {
   try { localStorage.setItem('bbg-view', view); } catch (_) {}
   if (office) load(false);
 }
+// ---------- sign-in ----------
+const signedIn = () => !A.S.config.pwSet || (!!A.S.config.token && Number(A.S.config.tokenExp) > Date.now());
+function signinScreen() {
+  return `<div class="signin"><h2>Office sign-in</h2><p class="hint">Enter the office password. This computer stays signed in for 2 weeks, or until you tap Sign out.</p>
+    <input id="siPw" type="password" autocomplete="current-password" placeholder="Office password">
+    <button class="big small" type="button" id="siGo">Sign in</button><p class="hint" id="siMsg"></p>
+    <p class="hint">Forgot it? In Apps Script run <b>resetOfficePassword</b>, then set a new one here.</p></div>`;
+}
+async function signIn() {
+  const pw = $('siPw').value; if (!pw) return;
+  $('siGo').disabled = true; msg('siMsg', 'Checking…');
+  try {
+    const j = await A.api({ action: 'login', password: pw });
+    Object.assign(A.S.config, { token: j.token, tokenExp: new Date(j.expires).getTime() });
+    await A.rememberPw(pw); render(); load(true);
+  } catch (err) { msg('siMsg', err.message); if ($('siGo')) $('siGo').disabled = false; }
+}
+async function signOut() {
+  try { await A.api({ action: 'logout' }); } catch (_) {}
+  Object.assign(A.S.config, { token: null, tokenExp: 0 }); await A.DB.put('kv', A.S.config, 'config');
+  O.data = null; await A.DB.put('kv', null, 'office'); O.read = null; render();
+}
+function openPw() {
+  const change = !!A.S.config.pwSet;
+  $('pwTitle').textContent = change ? 'Change the office password' : 'Set an office password';
+  $('pwIntro').textContent = change ? 'Everyone signs in with the new one next time.' : 'Office computers will need it to open the office, and every computer needs it to open Settings. At least 6 characters.';
+  $('pwOldRow').hidden = !change; for (const id of ['pwOld', 'pwNew', 'pwNew2']) $(id).value = ''; msg('pwMsg', '');
+  $('pwDlg').showModal();
+}
+async function savePw() {
+  if ($('pwNew').value !== $('pwNew2').value) return msg('pwMsg', "The two new passwords don't match.");
+  $('pwSave').disabled = true;
+  try {
+    const j = await A.api({ action: 'setPassword', password: $('pwOld').value, newPassword: $('pwNew').value });
+    Object.assign(A.S.config, { token: j.token, tokenExp: new Date(j.expires).getTime() });
+    await A.rememberPw($('pwNew').value);
+    $('pwDlg').close(); A.toast('Office password saved'); render();
+  } catch (err) { msg('pwMsg', err.message); }
+  finally { $('pwSave').disabled = false; }
+}
 function render() {
+  const gate = !signedIn();
+  document.querySelectorAll('#officeView .tabs, #officeView .ofilters').forEach(x => x.hidden = gate);
+  if (gate) { $('oStatus').textContent = ''; $('oBody').innerHTML = signinScreen(); $('siGo').onclick = signIn; $('siPw').onkeydown = ev => { if (ev.key === 'Enter') signIn(); }; $('siPw').focus(); return; }
+  $('oPw').textContent = A.S.config.pwSet ? 'Password' : 'Set password'; $('oSignOut').hidden = !A.S.config.pwSet;
   const ys = years();
   $('oYear').innerHTML = [['', 'All crop years'], ...ys.map(y => [y, y])].map(([v, l]) => `<option value="${v}"${String(v) === String(O.year) ? ' selected' : ''}>${l}</option>`).join('');
   document.querySelectorAll('#officeView .tabs button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === O.tab)));
@@ -72,7 +119,9 @@ function render() {
   $('oField').innerHTML = [['', 'All fields'], ...fnames.map(f => [f, f])].map(([v, l]) => `<option value="${e(v)}"${v === O.fieldPick ? ' selected' : ''}>${e(l)}</option>`).join('');
   $('oField').hidden = O.tab !== 'fields';
   status();
-  $('oBody').innerHTML = ({ home, contracts, payments, tickets, customers, fieldsetup, fields, inventory, landlord, discounts, writeoffs, adjustments })[O.tab]();
+  $('oBody').innerHTML = (A.S.config.pwSet ? '' : `<div class="pwwarn">Anyone using this computer can open the office. <button class="ghost" type="button" id="pwSetup">Set an office password</button></div>`) +
+    ({ home, contracts, payments, tickets, customers, fieldsetup, fields, inventory, landlord, discounts, writeoffs, adjustments })[O.tab]();
+  if ($('pwSetup')) $('pwSetup').onclick = openPw;
   wire();
 }
 
@@ -1066,6 +1115,9 @@ function init() {
   $('fYear').onchange = loadShares; $('fCopy').onclick = copyLastYear;
   $('fAddOwner').onclick = () => { O.shareRows.push({ Owner: '', SharePct: O.shareRows.length ? Math.max(0, 100 - O.shareRows.reduce((a, r) => a + (Number(r.SharePct) || 0), 0)) : 100 }); drawShares(); };
   for (const id of ['aComm', 'aYear', 'aBu']) { $(id).addEventListener('input', adjPreview); $(id).addEventListener('change', adjPreview); }
+  $('oPw').onclick = openPw; $('oSignOut').onclick = signOut;
+  $('pwSave').onclick = savePw; $('pwCancel').onclick = () => $('pwDlg').close();
+  window.addEventListener('bbg-signin', () => { if (!$('officeView').hidden) render(); });
   applyRole();
   window.addEventListener('bbg-role', applyRole);
 }

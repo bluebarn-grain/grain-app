@@ -228,3 +228,8 @@ td:has(> select.tsel) .badge{display:inline-block;margin-top:3px}
   #printArea tr.sub td{background:none}
   #printArea .hint{color:#444}
 }
+
+/* office sign-in */
+.signin{max-width:380px;margin:30px auto;display:flex;flex-direction:column;gap:10px}
+.signin input{font-size:17px;padding:10px}
+.pwwarn{background:#fff4e0;border:1px solid #f0c27a;border-radius:8px;padding:8px 12px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}

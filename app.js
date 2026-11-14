@@ -415,9 +415,10 @@ function printTicket(t) {
 async function api(body, timeoutMs = 25000) {
   const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), timeoutMs);
   try {
-    const r = await fetch(S.config.backendUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ ...body, key: S.config.key }), redirect: 'follow', signal: ctl.signal });
+    const r = await fetch(S.config.backendUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ token: S.config.token || undefined, ...body, key: S.config.key }), redirect: 'follow', signal: ctl.signal });
     const j = await r.json();
-    if (!j.ok) throw new Error(j.error || 'Backend error');
+    if (!j.ok && j.signin) { S.config.token = null; S.config.pwSet = true; await DB.put('kv', S.config, 'config'); window.dispatchEvent(new Event('bbg-signin')); }
+    if (!j.ok) { const er = new Error(j.error || 'Backend error'); er.signin = !!j.signin; throw er; }
     return j;
   } finally { clearTimeout(tm); }
 }
@@ -431,6 +432,7 @@ const wire = t => ({
 });
 async function refreshLists() {
   const j = await api({ action: 'lists' });
+  if (typeof j.hasPassword === 'boolean' && j.hasPassword !== !!S.config.pwSet) { S.config.pwSet = j.hasPassword; await DB.put('kv', S.config, 'config'); }
   S.lists = { customers: j.customers, fields: j.fields, shares: j.shares, commodities: j.commodities.length ? j.commodities : EMPTY_LISTS.commodities, contracts: j.contracts, settings: j.settings };
   S.listsAt = Date.now();
   await DB.put('kv', S.lists, 'lists'); await DB.put('kv', S.listsAt, 'listsAt');
@@ -597,6 +599,37 @@ function roleForm() {
   $('sRoleWhy').textContent = scaleKey ? 'This is the scale key, so this computer can only run the scale.' : '';
   document.querySelectorAll('#settings .scaleonly').forEach(x => x.hidden = $('sRole').value === 'office');
 }
+// ---- office password: a salted hash kept on this computer so Settings can unlock offline
+async function localHash(pw) {
+  if (!S.config.devSalt) S.config.devSalt = crypto.getRandomValues(new Uint32Array(4)).join('-');
+  let h = S.config.devSalt + '|' + pw;
+  for (let i = 0; i < 300; i++) h = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(h)))).map(b => b.toString(16).padStart(2, '0')).join('');
+  return h;
+}
+async function rememberPw(pw) { S.config.pwLocal = await localHash(pw); S.config.pwSet = true; await DB.put('kv', S.config, 'config'); }
+// Online: the backend checks it (and counts wrong tries). Offline: the hash from the last good check.
+async function checkPw(pw) {
+  try { const j = await api({ action: 'checkPassword', password: pw }, 15000); if (j.good) await rememberPw(pw); if (!j.hasPassword) { S.config.pwSet = false; await DB.put('kv', S.config, 'config'); } return j.good; }
+  catch (e) {
+    if (/Too many/.test(e.message)) throw e;
+    if (!S.config.pwLocal) throw new Error('No internet, and this computer has never checked the password. Connect and try again.');
+    return (await localHash(pw)) === S.config.pwLocal;
+  }
+}
+function askPassword() {
+  return new Promise(res => {
+    $('ulPw').value = ''; $('ulMsg').textContent = ''; $('unlockDlg').showModal(); $('ulPw').focus();
+    const go = async () => {
+      $('ulGo').disabled = true;
+      try { if (await checkPw($('ulPw').value)) { $('unlockDlg').close(); res(true); } else $('ulMsg').textContent = 'Wrong password.'; }
+      catch (e) { $('ulMsg').textContent = e.message; }
+      finally { $('ulGo').disabled = false; }
+    };
+    $('ulGo').onclick = go; $('ulPw').onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); go(); } };
+    $('ulCancel').onclick = () => { $('unlockDlg').close(); res(false); };
+  });
+}
+async function openSettingsLocked() { if (S.config.pwSet && !(await askPassword())) return; openSettings(false); }
 function openSettings(first) {
   const c = S.config, k = S.counters || {};
   $('sRole').value = role(); roleForm();
@@ -648,7 +681,7 @@ async function init() {
   $('dIn').onclick = () => { S.dir = 'IN'; carryInbound(); loadDetail(); renderScale(); };
   $('wIn').onclick = weighIn; $('wOut').onclick = weighOut; $('void').onclick = voidTicket;
   $('newT').onclick = () => { S.sel = null; if (S.dir === 'IN' && !S.draft.field) carryInbound(); render(); loadDetail(); $('truck').focus(); };
-  $('btnPort').onclick = connectPort; $('btnSettings').onclick = () => openSettings(false);
+  $('btnPort').onclick = connectPort; $('btnSettings').onclick = openSettingsLocked;
   $('sCheck').onclick = checkBackend; $('sRole').onchange = roleForm; $('sSave').onclick = saveSettings; $('sCancel').onclick = () => $('settings').close();
   $('sEmpty').onclick = () => { SIM.target = 26000 + Math.round(Math.random() * 250) * 20; };
   $('sLoad').onclick = () => { const t = selTicket(); SIM.target = t && t.dir === 'OUT' ? t.first.lb + 54000 + Math.round(Math.random() * 200) * 20 : 80000 + Math.round(Math.random() * 300) * 20; };
@@ -660,7 +693,7 @@ async function init() {
   window.addEventListener('online', () => sync(true));
 
   // Hand the office screens (office.js) what they need from here.
-  window.BBG_APP = { role, printTicket, api, DB, S, L, toast, esc, fmt0, fmt2, dt, refreshLists, online: () => S.net === 'online', configured: () => !!(S.config.backendUrl && S.config.key) };
+  window.BBG_APP = { role, rememberPw, printTicket, api, DB, S, L, toast, esc, fmt0, fmt2, dt, refreshLists, online: () => S.net === 'online', configured: () => !!(S.config.backendUrl && S.config.key) };
   window.dispatchEvent(new Event('bbg-ready'));
 
   if (S.dir === 'IN') carryInbound();

@@ -158,6 +158,8 @@
         <button class="ghost" type="button" id="oPrint">Print</button>
         <button class="ghost" type="button" id="oArchive">Year-end archive</button>
         <button class="ghost" type="button" id="oRefresh">Refresh</button>
+        <button class="ghost" type="button" id="oPw">Password</button>
+        <button class="ghost" type="button" id="oSignOut">Sign out</button>
       </div>
     </div>
     <div class="hint" id="oStatus"></div>
@@ -360,13 +362,37 @@
   </form>
 </dialog>
 
+<dialog id="unlockDlg">
+  <form method="dialog">
+    <h2>Office password</h2>
+    <p class="hint">Settings are locked. Enter the office password.</p>
+    <div class="form"><div class="f full"><label for="ulPw">Password</label><input id="ulPw" type="password" autocomplete="current-password"></div></div>
+    <p class="hint" id="ulMsg"></p>
+    <div class="foot"><span></span><div class="footbtns"><button class="ghost" type="button" id="ulCancel">Cancel</button><button class="big small" type="button" id="ulGo">Unlock</button></div></div>
+  </form>
+</dialog>
+
+<dialog id="pwDlg">
+  <form method="dialog">
+    <h2 id="pwTitle">Office password</h2>
+    <p class="hint" id="pwIntro"></p>
+    <div class="form">
+      <div class="f full" id="pwOldRow"><label for="pwOld">Current password</label><input id="pwOld" type="password" autocomplete="current-password"></div>
+      <div class="f"><label for="pwNew">New password</label><input id="pwNew" type="password" autocomplete="new-password"></div>
+      <div class="f"><label for="pwNew2">Type it again</label><input id="pwNew2" type="password" autocomplete="new-password"></div>
+    </div>
+    <p class="hint" id="pwMsg"></p>
+    <div class="foot"><span></span><div class="footbtns"><button class="ghost" type="button" id="pwCancel">Cancel</button><button class="big small" type="button" id="pwSave">Save password</button></div></div>
+  </form>
+</dialog>
+
 <dialog id="settings">
   <form id="setForm" method="dialog">
     <h2>Settings</h2>
     <p class="hint" id="setIntro"></p>
     <div class="form">
       <div class="f full"><label for="sUrl">Backend web app URL</label><input id="sUrl" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off"></div>
-      <div class="f full"><label for="sKey">Backend key</label><input id="sKey" autocomplete="off"></div>
+      <div class="f full"><label for="sKey">Backend key</label><input id="sKey" type="password" autocomplete="off"></div>
       <div class="f full"><label for="sRole">This computer is</label><select id="sRole"><option value="scale">The scale house — scale screen only</option><option value="office">An office computer — office screens only</option><option value="both">Both (for testing)</option></select><span class="hint" id="sRoleWhy"></span></div>
       <div class="f"><label for="sStation">Station name</label><input id="sStation" value="Scale house"></div>
       <div class="f"><label for="sOp">Default weighmaster</label><input id="sOp"></div>

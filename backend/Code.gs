@@ -40,7 +40,53 @@ function setupScaleKey() {
   Logger.log('Office key (office computers keep using this one): ' + PROPS.getProperty('API_KEY'));
 }
 
-var SCALE_ACTIONS = ['ping', 'lists', 'saveTickets'];
+var SCALE_ACTIONS = ['ping', 'lists', 'saveTickets', 'checkPassword'];
+// Office actions need a sign-in (once an office password is set). These don't.
+var NO_SIGNIN = ['ping', 'lists', 'saveTickets', 'checkPassword', 'login', 'logout', 'setPassword'];
+var TOKEN_DAYS = 14;
+
+/** Forgot the office password? Run this, then set a new one from the app. */
+function resetOfficePassword() {
+  PROPS.deleteProperty('OFFICE_PW'); PROPS.deleteProperty('PW_FAILS');
+  Object.keys(PROPS.getProperties()).forEach(function (k) { if (k.indexOf('TOK_') === 0) PROPS.deleteProperty(k); });
+  Logger.log('Office password cleared and everyone signed out. Open the Office in the app to set a new one.');
+}
+function pwHash_(salt, pw) {
+  var h = salt + '|' + pw;
+  for (var i = 0; i < 500; i++) h = Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, h, Utilities.Charset.UTF_8));
+  return h;
+}
+function pwCheck_(pw) {
+  var stored = PROPS.getProperty('OFFICE_PW'); if (!stored) return true;
+  var f = (PROPS.getProperty('PW_FAILS') || '0|0').split('|'), n = Number(f[0]), at = Number(f[1]);
+  if (n >= 5 && Date.now() - at < 15 * 60000) throw new Error('Too many wrong passwords. Try again in ' + Math.ceil((15 * 60000 - (Date.now() - at)) / 60000) + ' minutes.');
+  if (n >= 5) n = 0;
+  var parts = stored.split(':');
+  if (pwHash_(parts[0], String(pw || '')) === parts[1]) { PROPS.deleteProperty('PW_FAILS'); return true; }
+  PROPS.setProperty('PW_FAILS', (n + 1) + '|' + Date.now());
+  return false;
+}
+function tokenOk_(t) { var exp = t && PROPS.getProperty('TOK_' + t); return !!exp && Number(exp) > Date.now(); }
+function login_(p) {
+  if (!PROPS.getProperty('OFFICE_PW')) throw new Error('No office password yet — set one first');
+  if (!pwCheck_(p.password)) throw new Error('Wrong password');
+  var now = Date.now();
+  Object.keys(PROPS.getProperties()).forEach(function (k) { if (k.indexOf('TOK_') === 0 && Number(PROPS.getProperty(k)) < now) PROPS.deleteProperty(k); });
+  var t = Utilities.getUuid(), exp = now + TOKEN_DAYS * 86400000;
+  PROPS.setProperty('TOK_' + t, String(exp));
+  return { token: t, expires: new Date(exp).toISOString() };
+}
+function setPassword_(p) {
+  var pw = String(p.newPassword || '');
+  if (pw.length < 6) throw new Error('Use at least 6 characters');
+  if (PROPS.getProperty('OFFICE_PW')) {
+    if (!tokenOk_(p.token)) throw new Error('Sign in to the office first');
+    if (!pwCheck_(p.password)) throw new Error('The current password is wrong');
+  }
+  var salt = Utilities.getUuid();
+  PROPS.setProperty('OFFICE_PW', salt + ':' + pwHash_(salt, pw));
+  return login_({ password: pw });
+}
 // The scale only needs names and types — no emails, addresses, notes or contract emails.
 function scaleLists_(l) {
   l.customers = l.customers.map(function (c) { return { Customer: c.Customer, Type: c.Type, Active: c.Active }; });
@@ -72,11 +118,16 @@ function handle_(p) {
   var role = p.key === key ? 'office' : (scaleKey && p.key === scaleKey ? 'scale' : '');
   if (!role) return out_({ ok: false, error: 'Wrong backend key' });
   if (role === 'scale' && SCALE_ACTIONS.indexOf(p.action) < 0) return out_({ ok: false, error: 'This computer has the scale key, so the office side is not available here.' });
+  if (NO_SIGNIN.indexOf(p.action) < 0 && PROPS.getProperty('OFFICE_PW') && !tokenOk_(p.token)) return out_({ ok: false, error: 'Office sign-in needed', signin: true });
   try {
     var ss = SpreadsheetApp.openById(sheetId);
     switch (p.action) {
-      case 'ping': return out_({ ok: true, sheet: ss.getName(), time: new Date().toISOString(), role: role });
-      case 'lists': return out_(merge_({ ok: true }, role === 'scale' ? scaleLists_(lists_(ss)) : lists_(ss)));
+      case 'ping': return out_({ ok: true, sheet: ss.getName(), time: new Date().toISOString(), role: role, hasPassword: !!PROPS.getProperty('OFFICE_PW'), signedIn: tokenOk_(p.token) });
+      case 'login': return out_(merge_({ ok: true }, login_(p)));
+      case 'logout': if (p.token) PROPS.deleteProperty('TOK_' + p.token); return out_({ ok: true });
+      case 'setPassword': return out_(merge_({ ok: true }, setPassword_(p)));
+      case 'checkPassword': return out_({ ok: true, good: pwCheck_(p.password), hasPassword: !!PROPS.getProperty('OFFICE_PW') });
+      case 'lists': return out_(merge_({ ok: true, hasPassword: !!PROPS.getProperty('OFFICE_PW') }, role === 'scale' ? scaleLists_(lists_(ss)) : lists_(ss)));
       case 'saveTickets': return out_(merge_({ ok: true }, saveTickets_(ss, p.tickets || [], p.station || '')));
       case 'officeData': return out_(merge_({ ok: true }, officeData_(ss)));
       case 'saveContract': return out_(merge_({ ok: true }, saveContract_(ss, p.contract || {}, !!p.isNew)));

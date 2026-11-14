@@ -27,12 +27,15 @@ function makeSS(name, tabs) {
 function loadBackend(ss, props) {
   const store = { ...props }, sent = [];
   const ctx = {
-    PropertiesService: { getScriptProperties: () => ({ getProperty: k => store[k] ?? null, setProperty: (k, v) => { store[k] = v; } }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: k => store[k] ?? null, setProperty: (k, v) => { store[k] = v; }, deleteProperty: k => { delete store[k]; }, getProperties: () => ({ ...store }) }) },
     SpreadsheetApp: { openById: () => ss },
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: s => ({ text: s, setMimeType() { return this; } }) },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     Utilities: {
       getUuid: () => 'test-key',
+      DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' },
+      computeDigest: (alg, str) => Array.from(require('crypto').createHash('sha256').update(String(str), 'utf8').digest()).map(b => b > 127 ? b - 256 : b),
+      base64Encode: bytes => Buffer.from(typeof bytes === 'string' ? bytes : bytes.map(b => b & 255)).toString('base64'),
       newBlob: (data, type, name) => ({ data, type, name, getDataAsString: () => Buffer.from(data).toString('latin1') }),
       base64Decode: b64 => Array.from(Buffer.from(b64, 'base64')),
       formatDate: (d, tz, pat) => {

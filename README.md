@@ -66,6 +66,8 @@ Tap **Office** at the top (same app, same link). It opens on **Home**: today's l
 ## Scale PC vs office computers
 Settings → *This computer is*: **scale house** (scale screen only), **office** (office screens only, no ticket numbers or serial ports), or **both** (testing). Run `setupScaleKey` once in Apps Script and give the scale PC that key: it can only send tickets and read fields, buyers and open contracts, never the office side, prices or payments. Office computers keep the original key.
 
+**Office password.** Office → *Set password*. After that, office computers sign in (good for 2 weeks; *Sign out* clears the computer's office data) and every computer, including the scale PC, asks for it to open Settings (works offline once checked). 5 wrong tries lock it for 15 minutes. Forgot it: run `resetOfficePassword` in Apps Script.
+
 New inbound trucks start with the last inbound ticket's field, commodity, crop year and weighmaster.
 
 ## Payments (settlements)
