@@ -31,7 +31,7 @@ let calls = [];
 be.ctx.__claude = body => {
   calls.push(body);
   const ask = body.messages[0].content.find(c => c.type === 'text').text;
-  if (body.tool_choice.name === 'settlement_header') return { buyer: 'The Andersons, Inc.', statement_no: '246-093971', voucher: '758580', check_no: '070611', check_date: '2026-11-04',
+  if (body.tools[0].name === 'settlement_header') return { buyer: 'The Andersons, Inc.', statement_no: '246-093971', voucher: '758580', check_no: '070611', check_date: '2026-11-04',
     commodity: 'Yellow Corn', contracts: [{ contract_no: '0090504-01', price: 4.8675 }], total_bushels: bu, gross_amount: gross,
     deductions: [{ label: 'Kansas Grain Assessment', amount: assess }], net_amount: Math.round((gross - assess) * 100) / 100, check_amount: Math.round((gross - assess) * 100) / 100, load_count: 4, page_count: 5 };
   const m = /pages? (\d+)(?: to (\d+))?/.exec(ask), from = +m[1], to = +(m[2] || m[1]);

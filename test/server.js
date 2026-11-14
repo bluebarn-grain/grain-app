@@ -15,7 +15,7 @@ be.ctx.__claude = body => {
   lines.forEach(l => { l.amount = Math.round(l.net_bu * l.price * 100) / 100; });
   lines.push({ page: 2, buyer_ticket: 'S598999-01', ship_date: '2026-10-01', vehicle: '999', weight_lb: 50000, apply_pct: 100, net_bu: 892.86, price: 4.8675, amount: 4346.00 });
   const gross = Math.round(lines.reduce((a, l) => a + l.amount, 0) * 100) / 100, bu = Math.round(lines.reduce((a, l) => a + l.net_bu, 0) * 100) / 100, ded = Math.round(bu) / 100;
-  if (body.tool_choice.name === 'settlement_header') return { buyer: 'THE ANDERSONS, INC.', statement_no: '246-093971', voucher: '758580', check_no: '070611', check_date: '2026-11-04',
+  if (body.tools[0].name === 'settlement_header') return { buyer: 'THE ANDERSONS, INC.', statement_no: '246-093971', voucher: '758580', check_no: '070611', check_date: '2026-11-04',
     commodity: 'Yellow Corn', contracts: [{ contract_no: '0090504-01', price: 4.8675 }], total_bushels: bu, gross_amount: gross, deductions: [{ label: 'Kansas Grain Assessment', amount: ded }],
     net_amount: Math.round((gross - ded) * 100) / 100, check_amount: Math.round((gross - ded) * 100) / 100, load_count: lines.length };
   return { lines: /page 2|pages 1 to/.test(q) ? lines : [] };

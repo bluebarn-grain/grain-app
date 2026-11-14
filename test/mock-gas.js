@@ -46,7 +46,7 @@ function loadBackend(ss, props) {
     DriveApp: (() => { const folders = {}; const mk = n => ({ name: n, files: [], createFile(b) { this.files.push(b); return { getUrl: () => 'https://drive.example/' + encodeURIComponent(b.name) }; } });
       return { getFoldersByName: n => { let done = !folders[n]; return { hasNext: () => !done, next: () => { done = true; return folders[n]; } }; }, createFolder: n => (folders[n] = mk(n)), _folders: folders }; })(),
     UrlFetchApp: { fetchAll: reqs => reqs.map(r => { const body = JSON.parse(r.payload); const out = ctx.__claude(body);
-      return { getResponseCode: () => out.code || 200, getContentText: () => JSON.stringify(out.code ? { error: { message: out.error } } : { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: body.tool_choice.name, input: out }] }) }; }) },
+      return { getResponseCode: () => out.code || 200, getContentText: () => JSON.stringify(out.code ? { error: { message: out.error } } : { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: body.tools[0].name, input: out }] }) }; }) },
     Logger: { log: () => {} },
     console, Date, JSON, Math, Number, String, Array, Object
   };

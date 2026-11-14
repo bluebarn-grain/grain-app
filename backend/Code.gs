@@ -1042,7 +1042,8 @@ function anthropic_(content, tool) {
     url: 'https://api.anthropic.com/v1/messages', method: 'post', contentType: 'application/json', muteHttpExceptions: true,
     headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
     payload: JSON.stringify({ model: PROPS.getProperty('ANTHROPIC_MODEL') || 'claude-sonnet-5-5', max_tokens: 16000,
-      tools: [tool], tool_choice: { type: 'tool', name: tool.name }, messages: [{ role: 'user', content: content }] })
+      tools: [tool], tool_choice: { type: 'auto' },
+      messages: [{ role: 'user', content: content.concat([{ type: 'text', text: 'Answer only by calling the ' + tool.name + ' tool once. No other text.' }]) }] })
   };
 }
 function toolResult_(resp, what) {
@@ -1052,9 +1053,13 @@ function toolResult_(resp, what) {
     throw new Error('Reading the ' + what + ' failed (' + code + '): ' + String(msg).slice(0, 300));
   }
   var j = JSON.parse(body), use = (j.content || []).filter(function (c) { return c.type === 'tool_use'; })[0];
-  if (!use) throw new Error('Reading the ' + what + ' came back empty');
   if (j.stop_reason === 'max_tokens') throw new Error('The ' + what + ' was too long to read in one piece');
-  return use.input;
+  if (use) return use.input;
+  // fallback: JSON written as text
+  var txt = (j.content || []).filter(function (c) { return c.type === 'text'; }).map(function (c) { return c.text; }).join('\n');
+  var a = txt.indexOf('{'), b = txt.lastIndexOf('}');
+  if (a >= 0 && b > a) { try { return JSON.parse(txt.slice(a, b + 1)); } catch (e) {} }
+  throw new Error('Reading the ' + what + ' came back empty');
 }
 
 var HEADER_TOOL = { name: 'settlement_header', description: 'The statement-level facts: who paid, check, totals and deductions.',
