@@ -17,7 +17,7 @@ const BASE = 'http://localhost:8123/';
   const p = await dl.path(); const txt = require('fs').readFileSync(p, 'utf8');
   console.log('   file:', dl.suggestedFilename(), '| lines:', txt.split('\r\n').length, '| msg:', await page.textContent('#exportMsg'));
   console.log('• office status line shows backups');
-  await page.click('#navOffice'); await page.waitForFunction(() => /Updated/.test(document.getElementById('oStatus').textContent));
+  await page.click('#navOffice'); await page.waitForFunction(() => /Updated/.test(document.getElementById('oStatus').textContent)); await page.click('[data-tab="contracts"]');
   console.log('   ', await page.textContent('#oStatus'));
   console.log('• year-end archive');
   await page.selectOption('#oYear', '2026'); await page.click('#oArchive'); await page.waitForFunction(() => window.__printed);

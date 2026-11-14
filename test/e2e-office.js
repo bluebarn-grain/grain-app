@@ -20,7 +20,7 @@ const post = b => fetch(BASE + 'api', { method: 'POST', body: JSON.stringify({ k
   await page.click('#sCheck'); await page.waitForFunction(() => /Connected/.test(document.getElementById('setMsg').textContent)); await page.click('#sSave');
 
   step('open the office side');
-  await page.click('#navOffice'); await page.waitForFunction(() => /Updated/.test(document.getElementById('oStatus').textContent));
+  await page.click('#navOffice'); await page.waitForFunction(() => /Updated/.test(document.getElementById('oStatus').textContent)); await page.click('[data-tab="contracts"]');
   await page.screenshot({ path: shots + '/office-contracts.png', fullPage: true });
 
   step('add a contract');

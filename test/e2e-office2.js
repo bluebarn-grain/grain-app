@@ -33,7 +33,7 @@ const shots = process.argv[2] || '/tmp';
   await page.fill('#bol', '1027990'); await page.dispatchEvent('#bol', 'input'); await page.waitForTimeout(200); await page.click('#wOut'); await page.waitForTimeout(1500);
 
   step('office → Tickets: add a paper ticket');
-  await page.click('#navOffice'); await page.waitForFunction(() => /Updated/.test(document.getElementById('oStatus').textContent));
+  await page.click('#navOffice'); await page.waitForFunction(() => /Updated/.test(document.getElementById('oStatus').textContent)); await page.click('[data-tab="contracts"]');
   await page.click('[data-tab="tickets"]'); await page.click('#tNew');
   await page.fill('#tNo', '5012'); await page.fill('#tIn', '2026-11-12T14:05'); await page.fill('#tOut', '2026-11-12T14:22');
   await page.selectOption('#tField', 'TEST Share Quarter'); await page.fill('#tLoad', '7'); await page.fill('#tTruck', 'Cart 2');

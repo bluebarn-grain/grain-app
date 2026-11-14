@@ -6,7 +6,7 @@
 const R = window.BBR;
 const $ = id => document.getElementById(id);
 let A;                                  // the scale app's helpers (window.BBG_APP)
-const O = { fieldPick: '', tq: '', tdir: '', tvoid: false, ticket: null, comm: null, pricingNo: null, data: null, tab: 'contracts', year: '', open: {}, busy: false, adjType: '', contract: null, customer: null, field: null, shareRows: [] };
+const O = { home: true, fieldPick: '', tq: '', tdir: '', tvoid: false, ticket: null, comm: null, pricingNo: null, data: null, tab: 'home', year: '', open: {}, busy: false, adjType: '', contract: null, customer: null, field: null, shareRows: [] };
 
 const n0 = v => A.fmt0(v), n2 = v => A.fmt2(v), e = v => A.esc(v);
 const day = v => { if (!v) return ''; const d = new Date(v); return isNaN(d) ? '' : `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`; };
@@ -72,7 +72,7 @@ function render() {
   $('oField').innerHTML = [['', 'All fields'], ...fnames.map(f => [f, f])].map(([v, l]) => `<option value="${e(v)}"${v === O.fieldPick ? ' selected' : ''}>${e(l)}</option>`).join('');
   $('oField').hidden = O.tab !== 'fields';
   status();
-  $('oBody').innerHTML = ({ contracts, tickets, customers, fieldsetup, fields, inventory, landlord, discounts, writeoffs, adjustments })[O.tab]();
+  $('oBody').innerHTML = ({ home, contracts, tickets, customers, fieldsetup, fields, inventory, landlord, discounts, writeoffs, adjustments })[O.tab]();
   wire();
 }
 
@@ -231,6 +231,86 @@ async function saveContract() {
   finally { $('cSave').disabled = false; }
 }
 const msg = (id, t) => { $(id).textContent = t; };
+
+// ---------- Home: the whole operation at a glance ----------
+const isTest = t => t.TestTicket === true || String(t.TestTicket).toUpperCase() === 'TRUE';
+const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+function homeYear() {
+  if (O.year) return O.year;
+  const ys = D().tickets.map(t => Number(t.CropYear)).filter(Boolean);
+  return String(ys.length ? Math.max(...ys) : new Date().getFullYear());
+}
+function home() {
+  const y = homeYear(), o = { includeTest: testMode(), cropYear: y }, now = new Date();
+  const live = D().tickets.filter(t => t.Status === 'Closed' && (testMode() || !isTest(t)));
+  const today = live.filter(t => t.DateTime && sameDay(new Date(t.DateTime), now));
+  const tIn = today.filter(t => t.Direction === 'IN'), tOut = today.filter(t => t.Direction === 'OUT');
+  const sum = (a, f) => a.reduce((x, t) => x + (Number(f(t)) || 0), 0);
+  const inv = R.inventory(D(), o);
+  const onHand = sum(inv, r => r.onHand), yours = sum(inv, r => r.farmOwned), held = sum(inv, r => r.landlordHeld), unsold = sum(inv, r => r.unsold), unpriced = sum(inv, r => r.shippedUnpriced);
+  const half = (Number(D().settings.TypicalLoadBu) || 1000) / 2;
+  // contracts
+  const applied = R.appliedByContract(D(), o), pr = R.contractPricing(D(), o);
+  const open = D().contracts.filter(c => c.Status !== 'Closed' && String(c.CropYear) === y).map(c => {
+    const no = String(c.ContractNo), shipped = applied[no] || 0, total = Number(c.Bushels) || 0;
+    return { no, buyer: c.Buyer, comm: c.Commodity, total, shipped, left: total - shipped, pct: total ? Math.min(100, shipped / total * 100) : 0, p: pr[no] };
+  }).sort((a, b) => b.pct - a.pct);
+  // harvest by day (inbound wet bu), last 21 days that had loads
+  const byDay = {};
+  live.filter(t => t.Direction === 'IN' && String(t.CropYear) === y && t.DateTime).forEach(t => { const d = new Date(t.DateTime); const k = isoDay(d); byDay[k] = (byDay[k] || 0) + (Number(t.WetBu) || 0); });
+  const days = Object.keys(byDay).sort().slice(-21);
+  const fr = R.fieldReport(D(), o).filter(r => r.dryBuPerAcre != null).sort((a, b) => b.dryBuPerAcre - a.dryBuPerAcre).slice(0, 5);
+  // needs attention
+  const attn = [];
+  const tbd = live.filter(t => t.Direction === 'OUT' && (!t.ContractNo || t.ContractNo === 'TBD'));
+  if (tbd.length) attn.push([tbd.length, `outbound ticket${tbd.length === 1 ? '' : 's'} with no contract`, 'tickets']);
+  const noSplit = D().fields.filter(f => f.Active !== false && String(f.Active).toUpperCase() !== 'FALSE' && !D().shares.some(s => s.Field === f.Field && String(s.CropYear) === y));
+  if (noSplit.length) attn.push([noSplit.length, `field${noSplit.length === 1 ? '' : 's'} with no ${y} split`, 'fieldsetup']);
+  if (held > 0.5) attn.push([n0(held), `bu of landlord grain not bought yet`, 'landlord']);
+  if (unpriced > 0.5) attn.push([n0(unpriced), `bu shipped with no price`, 'contracts']);
+  open.filter(c => c.left >= half && c.left < half * 4).forEach(c => attn.push([n0(c.left), `bu left on ${e(c.no)} (${e(c.buyer)}) — about ${Math.max(1, Math.round(c.left / (half * 2)))} load${Math.round(c.left / (half * 2)) > 1 ? 's' : ''}`, 'contracts']));
+  const waiting = (A.S.tickets || []).filter(t => !t.synced && t.status !== 'Open').length;
+  if (waiting) attn.push([waiting, `ticket${waiting === 1 ? '' : 's'} on this device waiting to sync`, 'scale']);
+  const bl = D().backupLog && D().backupLog.length ? D().backupLog[D().backupLog.length - 1] : null;
+  if (!bl) attn.push(['!', 'no backups yet — run setupBackups', '']);
+  else if ((Date.now() - new Date(bl.At).getTime()) / 3600000 > 36) attn.push(['!', `last backup ${dtm(bl.At)} — overdue`, '']);
+
+  const max = Math.max(1, ...days.map(d => byDay[d])), W = 560, H = 150, bw = days.length ? Math.min(40, (W - 20) / days.length - 4) : 0;
+  const chart = days.length ? `<svg viewBox="0 0 ${W} ${H + 22}" role="img" aria-label="Bushels in by day">
+      ${days.map((d, i) => { const h = Math.max(2, byDay[d] / max * H), x = 10 + i * ((W - 20) / days.length); return `<rect x="${x}" y="${H - h}" width="${bw}" height="${h}" rx="3" fill="url(#hg)"><title>${d}: ${n0(byDay[d])} bu</title></rect>
+        <text class="ax" x="${x + bw / 2}" y="${H + 14}" text-anchor="middle">${Number(d.slice(5, 7))}/${Number(d.slice(8))}</text>`; }).join('')}
+      <defs><linearGradient id="hg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4a9fd1"/><stop offset="1" stop-color="#2b3a6b"/></linearGradient></defs></svg>
+      <div class="hint">Wet bushels in from the fields by day · best day ${n0(max)} bu</div>` : '<div class="hint">No loads in from the fields yet this crop year.</div>';
+
+  return `<div class="home">
+    <div class="hhead"><img src="logo.png" alt=""><div><div class="hn">Blue Barn Land &amp; Cattle</div><div class="hd">${now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</div></div><div class="hy">${e(y)} crop year</div></div>
+    <div class="tiles">
+      <div class="tile navy" data-go="tickets"><span class="label">Today</span>
+        <div class="split"><div><div class="tnum">${tIn.length}</div><div class="sm">loads in · ${n0(sum(tIn, t => t.WetBu))} bu</div></div>
+        <div><div class="tnum">${tOut.length}</div><div class="sm">loads out · ${n0(sum(tOut, t => t.WetBu))} bu</div></div></div></div>
+      <div class="tile" data-go="inventory"><span class="label">On hand</span><div class="tnum">${n0(onHand)}</div>
+        <div class="sm">${n0(yours)} yours${held > 0.5 ? ` · ${n0(held)} landlords'` : ''}</div>
+        <div class="sm">${inv.filter(r => Math.abs(r.onHand) > 0.5).map(r => `${e(r.commodity)} ${n0(r.onHand)}`).join(' · ') || 'bushels in the bins'}</div></div>
+      <div class="tile" data-go="inventory"><span class="label">Unsold (yours)</span><div class="tnum${unsold < 0 ? ' neg' : ''}">${n0(unsold)}</div><div class="sm">after what's left on open contracts</div></div>
+      <div class="tile ${unpriced > 0.5 ? 'warn' : ''}" data-go="contracts"><span class="label">Shipped unpriced</span><div class="tnum">${n0(unpriced)}</div><div class="sm">${unpriced > 0.5 ? 'hauled with no price yet' : 'everything shipped is priced'}</div></div>
+    </div>
+    <div class="hgrid">
+      <div class="hcard"><h3>Contracts</h3>
+        ${open.length ? open.map(c => `<div class="prog" data-goc="${e(c.no)}"><div class="pl"><span><b>${e(c.no)}</b> · ${e(c.buyer)} · ${e(c.comm)}</span><span>${n0(c.shipped)} of ${n0(c.total)} bu · ${Math.round(c.pct)}%</span></div>
+          <div class="bar"><i class="${c.left < half ? 'full' : ''}" style="width:${c.pct.toFixed(1)}%"></i></div>
+          <div class="hint">${c.left < half ? 'Filled' : n0(c.left) + ' bu left'}${c.p && c.p.priced ? ` · priced ${n0(c.p.priced)} @ ${money(c.p.avgFlat)}` : ' · not priced'}</div></div>`).join('')
+        : `<div class="hint">No open contracts for ${e(y)}.</div>`}
+      </div>
+      <div class="hcard"><h3>Needs attention</h3>
+        ${attn.length ? `<div class="attn">${attn.map(([n, t, go]) => `<a data-go="${go}"><b>${n}</b><span>${t}</span></a>`).join('')}</div>` : '<div class="allgood">All caught up.</div>'}
+      </div>
+      <div class="hcard chart"><h3>Harvest</h3>${chart}</div>
+      <div class="hcard"><h3>Top fields · dry bu/acre</h3>
+        ${fr.length ? `<div class="topf">${fr.map(r => `<span>${e(r.field)} <span class="hint">${e(r.commodity)}</span></span><span class="n">${r.dryBuPerAcre.toFixed(1)}</span>`).join('')}</div>` : '<div class="hint">Shows once fields with acres have loads in.</div>'}
+      </div>
+    </div>
+  </div>`;
+}
 
 // ---------- tickets: paper tickets and fixing mistakes ----------
 const localDT = v => { if (!v) return ''; const d = new Date(v); if (isNaN(d)) return ''; const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
@@ -788,7 +868,7 @@ function printArchive() {
 function printReport() {
   let a = $('printArea');
   if (!a) { a = document.createElement('div'); a.id = 'printArea'; document.body.appendChild(a); }
-  const names = { tickets: 'Tickets', discounts: 'Discount schedules', contracts: 'Contracts', customers: 'Customers', fieldsetup: 'Fields and splits', fields: 'Field report', inventory: 'Inventory and sales position', landlord: 'Landlord grain', writeoffs: 'Write-offs', adjustments: 'Inventory adjustments' };
+  const names = { home: 'Overview', tickets: 'Tickets', discounts: 'Discount schedules', contracts: 'Contracts', customers: 'Customers', fieldsetup: 'Fields and splits', fields: 'Field report', inventory: 'Inventory and sales position', landlord: 'Landlord grain', writeoffs: 'Write-offs', adjustments: 'Inventory adjustments' };
   const body = $('oBody').cloneNode(true);
   body.querySelectorAll('button').forEach(b => b.remove());
   body.querySelectorAll('.ohead h2').forEach(h => h.remove());
@@ -800,6 +880,8 @@ function printReport() {
 // ---------------- wiring ----------------
 function wire() {
   const b = $('oBody');
+  b.querySelectorAll('[data-go]').forEach(x => x.onclick = () => { const g = x.dataset.go; if (!g) return; if (g === 'scale') return show('scale'); O.tab = g; render(); window.scrollTo(0, 0); });
+  b.querySelectorAll('[data-goc]').forEach(x => x.onclick = () => { O.tab = 'contracts'; O.open['c:' + x.dataset.goc] = true; render(); });
   b.querySelectorAll('[data-copen]').forEach(tr => tr.onclick = () => { O.open['c:' + tr.dataset.copen] = !O.open['c:' + tr.dataset.copen]; render(); });
   b.querySelectorAll('[data-contract]').forEach(x => x.onclick = ev => { ev.stopPropagation(); openContract(x.dataset.contract); });
   b.querySelectorAll('[data-cprint]').forEach(x => x.onclick = ev => { ev.stopPropagation(); printContract(x.dataset.cprint); });

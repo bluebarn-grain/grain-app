@@ -49,7 +49,7 @@ Every night at 7 pm, each buyer that shipped grain gets one email from BBL&C: a 
 **Contracts that fill.** Loads are never split. At weigh-out, if the contract has at least half this load left it takes the whole load (a little over is fine); if it has less, the whole load goes on the same buyer's next open contract for the same commodity (earliest shipment start first), even if that contract's shipment period hasn't started. The ticket prints the contract it went on and "(TEST-C1 FILLED)". A contract with less than half a typical load left drops off the scale's list; set **TypicalLoadBu** in Settings (default 1000). If the buyer has no other open contract, the load stays on the chosen contract and the office gets a warning. The **TicketContracts** tab shows which contract each ticket went on; fix a row there by hand if needed.
 
 ## Office side
-Tap **Office** at the top (same app, same link). It works on the iPad or a phone, and shows the last copy when the internet is down.
+Tap **Office** at the top (same app, same link). It opens on **Home**: today's loads in/out, bushels on hand (yours vs landlords'), unsold, shipped unpriced, a progress bar per open contract, harvest by day, top fields by dry bu/acre, and a *Needs attention* list (tickets with no contract, fields with no split, landlord grain not bought, unpriced shipments, contracts nearly filled, tickets waiting to sync, overdue backup). Tap anything to jump to it. It works on the iPad or a phone, and shows the last copy when the internet is down.
 - **Tickets:** every ticket, newest first, with search. Tap one to fix it (wrong field, customer, contract, truck, BOL, weights, grades) or void/restore it; a reason is required and every change goes to the **EditLog** tab. The owner split and contract are redone automatically. **Add paper ticket** types in a punch ticket written while the power or internet was out (uses the paper ticket's number; marked "paper").
 - **Discounts:** each commodity's schedule — lb/bu, standard moisture, water shrink or shrink % per point, handling shrink, drying charge per point, test weight discount — with a **Try the math** calculator that shows every step. Dry bushels everywhere use these.
 - **Customers:** buyers, landlords and the farm (Operator). Name, pays-as, contact, phone, email, address. Inactive ones don't show at the scale.
@@ -89,6 +89,7 @@ node test/reports.test.js       # office reports, contracts, adjustments
 node test/server.js & node test/e2e-office.js   # office side in the browser
 node test/server.js & node test/e2e-office2.js  # paper tickets, fixes, BOLs, discounts, legal
 node test/server.js & node test/e2e-backup.js   # ticket export, backup status, year-end archive
+node test/server.js & node test/e2e-home.js     # office Home dashboard
 ROLLOVER=1 node test/server.js & node test/e2e-rollover.js   # roll-over in the browser
 node test/server.js &           # fake backend on a mock Sheet
 node test/e2e.js shot.png       # browser run-through on the simulator
